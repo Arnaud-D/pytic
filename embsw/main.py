@@ -1,5 +1,6 @@
 import pyb
 import ujson
+import machine
 
 cfg = dict()
 cfg['historic'] = {'baudrate': 1200,
@@ -176,15 +177,21 @@ class Tic:
 def main(timeout):
     tic = Tic(cfg['historic'])
     start = pyb.millis()
+    exec_led = machine.Pin.board.LED_YELLOW
+    exec_led.on()
     frames = []
     while pyb.millis() - start < timeout:
         frame = tic.get_frame()
         if frame is not None:
             frames.append(frame)
             print(frame)
+    write_led = machine.Pin.board.LED_RED
+    write_led.on()
     with open("json.txt", "w") as f:
         for frame in frames:
             f.write(ujson.dumps(frame) + '\n')
+    write_led.off()
+    exec_led.off()
 
 
 timeout = 100e3
