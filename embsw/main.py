@@ -9,6 +9,7 @@ import os
 # TIC -->[produce_chars]--> chars -->[produce_frames]--> frames -->[process_frame]--> processed_frames
 # -->[lineify]--> lines --> [write_lines]--> file
 
+# TIC parameters sets
 historic_params = {'baudrate': 1200,
                    'bits': 7,
                    'parity': 0,
@@ -19,16 +20,21 @@ standard_params = {'baudrate': 9600,
                    'parity': 0,
                    'stop': 1,
                    }
-CFG = historic_params
-TIMEOUT = 20e3  # maximum execution time (ms)
-OUTPUT_FILE = "data.json"
 
-# Heartbeat diode parameters
-HEARTBEAT_LED = machine.Pin.board.LED_YELLOW
-HEARTBEAT_PERIOD = 500
+# TIC configuration
+CFG = historic_params
+TIMEOUT = 3600*1e3  # maximum execution time (ms)
+OUTPUT_FILE = "data.json"
 
 # Diode for data availability
 DATA_AVAILABLE_LED = machine.Pin.board.LED_GREEN
+
+# Diode for frame reception
+FRAME_RECEIVED_LED = machine.Pin.board.LED_BLUE
+FRAME_RECEIVED_PULSE_PERIOD = 100
+
+# Diode for errors
+ERROR_LED = machine.Pin.board.LED_RED
 
 # Special symbols
 STX = 0x02
@@ -37,7 +43,6 @@ EOT = 0x04
 LF = 0x0A
 CR = 0x0D
 SP = 0x20
-
 
 # Stream parser -- States
 PARSER_WAITING_FRAME = 0
@@ -59,23 +64,32 @@ frames = aqueues.Queue()
 processed_frames = aqueues.Queue()
 lines = aqueues.Queue()
 
+# Signal to stop shared between tasks
+running = True
+
 
 async def produce_chars(params):
     """Produces chars from the TIC interface."""
     tic = pyb.UART(6, params['baudrate'])
     tic.init(params['baudrate'], bits=params['bits'], parity=params['parity'], stop=params['stop'])
     reader = asyncio.StreamReader(tic)
-    while True:  # Read indefinitely from TIC
+    while running:
         data = await reader.read()
         for d in data:
             chars.put_nowait(d)
+
+
+async def pulse_led(led, period):
+    led.on()
+    await asyncio.sleep_ms(period)
+    led.off()
 
 
 async def produce_frames():
     """Consume chars and produces frames."""
     frame = []
     parser_state = PARSER_WAITING_FRAME
-    while True:  # Read indefinitely from characters queue
+    while running:
         c = await chars.get()
         if parser_state == PARSER_WAITING_FRAME:
             if c == STX:
@@ -84,9 +98,11 @@ async def produce_frames():
         elif parser_state == PARSER_RECEIVING_FRAME:
             if c == ETX:
                 frames.put_nowait((frame, FRAME_COMPLETE))
+                asyncio.ensure_future(pulse_led(FRAME_RECEIVED_LED, FRAME_RECEIVED_PULSE_PERIOD))
                 parser_state = PARSER_WAITING_FRAME
             elif c == EOT:
                 frames.put_nowait((frame, FRAME_TRUNCATED))
+                asyncio.ensure_future(pulse_led(FRAME_RECEIVED_LED, FRAME_RECEIVED_PULSE_PERIOD))
                 parser_state = PARSER_WAITING_FRAME
             else:
                 frame.append(c)
@@ -94,7 +110,7 @@ async def produce_frames():
 
 async def process_frames():
     """Consumes frames and produces lines."""
-    while True:  # Read indefinitely from frame queue
+    while running:
         frame, status = await frames.get()
         if status == FRAME_COMPLETE:
             parser_state = PARSER_WAITING_GROUP
@@ -137,7 +153,7 @@ def checksum(group):
 
 async def lineify():
     """Consume processed frames and produces lines."""
-    while True:  # Consume processed frames indefinetely
+    while running:
         processed_frame = await processed_frames.get()
         reformatted_frame = dict()
         for group in processed_frame:
@@ -150,6 +166,7 @@ async def lineify():
 
 async def write_lines(output_file, timeout):
     """Write lines from the writing queue to the output file."""
+    global running
     DATA_AVAILABLE_LED.off()
     with open(output_file, "w") as f:
         start = pyb.millis()
@@ -158,26 +175,19 @@ async def write_lines(output_file, timeout):
             f.write(line + '\n')
             print(line)
     DATA_AVAILABLE_LED.on()
-
-
-async def heartbeat(led, period):
-    """Make a HEARTBEAT_LED blink."""
-    while True:  # Blink indefinitely
-        led.on()
-        await asyncio.sleep_ms(period)
-        led.off()
-        await asyncio.sleep_ms(period)
+    running = False
 
 
 def main():
     pyb.freq(84000000, 84000000, 21000000, 42000000)
+    ERROR_LED.off()
     loop = asyncio.get_event_loop()
-    loop.create_task(heartbeat(HEARTBEAT_LED, HEARTBEAT_PERIOD))
     loop.create_task(produce_chars(CFG))
     loop.create_task(produce_frames())
     loop.create_task(process_frames())
     loop.create_task(lineify())
-    loop.run_until_complete(write_lines(OUTPUT_FILE, TIMEOUT))
+    loop.create_task(write_lines(OUTPUT_FILE, TIMEOUT))
+    loop.run_forever()
 
 
 if __name__ == "__main__":
