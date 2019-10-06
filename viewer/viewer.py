@@ -30,7 +30,7 @@ def extract_data(label, frames):
 
 def main():
     print("Linkom Viewer 0.1")
-    frames = load_data("json.txt")
+    frames = load_data("data.json")
     print_data(frames)
     power_raw = extract_data('PAPP', frames)
     power = list(map(int, power_raw))
