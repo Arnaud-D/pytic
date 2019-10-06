@@ -1,198 +1,188 @@
 import pyb
-import ujson
 import machine
+import uasyncio as asyncio
+import uasyncio.queues as aqueues
+import ujson
+import os
 
-cfg = dict()
-cfg['historic'] = {'baudrate': 1200,
+# Processing pipeline:
+# TIC -->[produce_chars]--> chars -->[produce_frames]--> frames -->[process_frame]--> processed_frames
+# -->[lineify]--> lines --> [write_lines]--> file
+
+historic_params = {'baudrate': 1200,
                    'bits': 7,
                    'parity': 0,
                    'stop': 1,
                    }
-cfg['standard'] = {'baudrate': 9600,
+standard_params = {'baudrate': 9600,
                    'bits': 7,
                    'parity': 0,
                    'stop': 1,
                    }
-sym = {'STX': 0x02,
-       'ETX': 0x03,
-       'LF': 0x0A,
-       'CR': 0x0D,
-       'EOT': 0x04,
-       'SP': 0x20,
-       }
+CFG = historic_params
+TIMEOUT = 20e3  # maximum execution time (ms)
+OUTPUT_FILE = "data.json"
+
+# Heartbeat diode parameters
+HEARTBEAT_LED = machine.Pin.board.LED_YELLOW
+HEARTBEAT_PERIOD = 500
+
+# Diode for data availability
+DATA_AVAILABLE_LED = machine.Pin.board.LED_GREEN
+
+# Special symbols
+STX = 0x02
+ETX = 0x03
+EOT = 0x04
+LF = 0x0A
+CR = 0x0D
+SP = 0x20
 
 
-class StreamParser:
-    """Parse a stream into frames."""
-    # Receiver states
-    PARSER_WAITING = 0
-    PARSER_RECEIVING = 1
-    # Frame status
-    FRAME_COMPLETE = 0
-    FRAME_TRUNCATED = 1
-    FRAME_UNAVAILABLE = 2
+# Stream parser -- States
+PARSER_WAITING_FRAME = 0
+PARSER_RECEIVING_FRAME = 1
 
-    def __init__(self):
-        self.state = StreamParser.PARSER_WAITING
-        self.old_state = StreamParser.PARSER_WAITING
-        self.frame = []
-        self.status = StreamParser.FRAME_UNAVAILABLE
+# Stream parser -- Frame statuses
+FRAME_COMPLETE = 0
+FRAME_TRUNCATED = 1
 
-    def set_state(self, state):
-        self.old_state = self.state
-        self.state = state
+# Frame parser -- States
+PARSER_WAITING_GROUP = 0
+PARSER_READING_LABEL = 1
+PARSER_READING_DATA = 2
+PARSER_READING_CHECKSUM = 3
 
-    def is_entry(self):
-        return self.state != self.old_state
+# Queues for data exchange between asynchronous tasks
+chars = aqueues.Queue()
+frames = aqueues.Queue()
+processed_frames = aqueues.Queue()
+lines = aqueues.Queue()
 
-    def exec(self, c):
-        if self.state == StreamParser.PARSER_WAITING:
-            # Transitions
-            if c == sym['STX']:
-                self.frame = []
-                self.status = StreamParser.FRAME_UNAVAILABLE
-                self.set_state(StreamParser.PARSER_RECEIVING)
+
+async def produce_chars(params):
+    """Produces chars from the TIC interface."""
+    tic = pyb.UART(6, params['baudrate'])
+    tic.init(params['baudrate'], bits=params['bits'], parity=params['parity'], stop=params['stop'])
+    reader = asyncio.StreamReader(tic)
+    while True:  # Read indefinitely from TIC
+        data = await reader.read()
+        for d in data:
+            chars.put_nowait(d)
+
+
+async def produce_frames():
+    """Consume chars and produces frames."""
+    frame = []
+    parser_state = PARSER_WAITING_FRAME
+    while True:  # Read indefinitely from characters queue
+        c = await chars.get()
+        if parser_state == PARSER_WAITING_FRAME:
+            if c == STX:
+                frame = []
+                parser_state = PARSER_RECEIVING_FRAME
+        elif parser_state == PARSER_RECEIVING_FRAME:
+            if c == ETX:
+                frames.put_nowait((frame, FRAME_COMPLETE))
+                parser_state = PARSER_WAITING_FRAME
+            elif c == EOT:
+                frames.put_nowait((frame, FRAME_TRUNCATED))
+                parser_state = PARSER_WAITING_FRAME
             else:
-                self.set_state(self.state)
-        elif self.state == StreamParser.PARSER_RECEIVING:
-            # Transitions
-            if c == sym['ETX']:
-                self.status = StreamParser.FRAME_COMPLETE
-                self.set_state(StreamParser.PARSER_WAITING)
-            elif c == sym['EOT']:
-                self.status = StreamParser.FRAME_TRUNCATED
-                self.set_state(StreamParser.PARSER_WAITING)
-            else:
-                self.frame.append(c)
-                self.status = StreamParser.FRAME_UNAVAILABLE
-                self.set_state(self.state)
-        return self.status
+                frame.append(c)
 
 
-class FrameParser:
-    """Parse a frame into data groups."""
-    # Parser states
-    PARSER_WAITING = 0
-    PARSER_READING_LABEL = 1
-    PARSER_READING_DATA = 2
-    PARSER_READING_CHECKSUM = 3
-    # Group status
-    GROUP_AVAILABLE = 0
-    GROUP_UNAVAILABLE = 1
-
-    def __init__(self):
-        self.state = FrameParser.PARSER_WAITING
-        self.old_state = FrameParser.PARSER_WAITING
-        self.group = None
-        self.status = FrameParser.GROUP_UNAVAILABLE
-
-    def set_state(self, state):
-        self.old_state = self.state
-        self.state = state
-
-    def exec(self, c):
-        if self.state == FrameParser.PARSER_WAITING:
-            # Transitions
-            if c == sym['LF']:
-                self.status = FrameParser.GROUP_UNAVAILABLE
-                self.group = dict()
-                self.group['label'] = ""
-                self.group['checkfield'] = []
-                self.set_state(FrameParser.PARSER_READING_LABEL)
-            else:
-                self.set_state(self.state)
-        elif self.state == FrameParser.PARSER_READING_LABEL:
-            self.group['checkfield'].append(c)
-            # Transitions
-            if c == sym['SP']:
-                self.group['data'] = ""
-                self.set_state(FrameParser.PARSER_READING_DATA)
-            else:
-                self.group['label'] += chr(c)
-                self.set_state(self.state)
-        elif self.state == FrameParser.PARSER_READING_DATA:
-            # Transitions
-            if c == sym['SP']:
-                self.group['checksum'] = ""
-                self.set_state(FrameParser.PARSER_READING_CHECKSUM)
-            else:
-                self.group['data'] += chr(c)
-                self.group['checkfield'].append(c)
-                self.set_state(self.state)
-        elif self.state == FrameParser.PARSER_READING_CHECKSUM:
-            # Transitions
-            if c == sym['CR']:
-                self.status = FrameParser.GROUP_AVAILABLE
-                self.set_state(FrameParser.PARSER_WAITING)
-            else:
-                self.group['checksum'] += chr(c)
-                self.set_state(self.state)
-        return self.status
+async def process_frames():
+    """Consumes frames and produces lines."""
+    while True:  # Read indefinitely from frame queue
+        frame, status = await frames.get()
+        if status == FRAME_COMPLETE:
+            parser_state = PARSER_WAITING_GROUP
+            groups = []
+            group = dict()
+            for c in frame:
+                if parser_state == PARSER_WAITING_GROUP:
+                    if c == LF:
+                        group = dict()
+                        group['label'] = ""
+                        group['data'] = ""
+                        group['checksum'] = ""
+                        group['checkfield'] = []
+                        parser_state = PARSER_READING_LABEL
+                elif parser_state == PARSER_READING_LABEL:
+                    group['checkfield'].append(c)
+                    if c == SP:
+                        parser_state = PARSER_READING_DATA
+                    else:
+                        group['label'] += chr(c)
+                elif parser_state == PARSER_READING_DATA:
+                    if c == SP:
+                        parser_state = PARSER_READING_CHECKSUM
+                    else:
+                        group['data'] += chr(c)
+                        group['checkfield'].append(c)
+                elif parser_state == PARSER_READING_CHECKSUM:
+                    if c == CR:
+                        groups.append(group)
+                        parser_state = PARSER_WAITING_GROUP
+                    else:
+                        group['checksum'] += chr(c)
+            processed_frames.put_nowait(groups)
 
 
-class DataFormatter:
-    @staticmethod
-    def format(groups):
-        res = dict()
-        for g in groups:
-            res[g['label']] = dict()
-            res[g['label']]['data'] = g['data']
-            res[g['label']]['valid'] = DataFormatter.check(g)
-        return res
-
-    @staticmethod
-    def check(group):
-        return group['checksum'] == chr((sum(group['checkfield']) & 0x3F) + 0x20)
+def checksum(group):
+    """Compute the checksum for a data group."""
+    return group['checksum'] == chr((sum(group['checkfield']) & 0x3F) + 0x20)
 
 
-class Tic:
-    def __init__(self, params):
-        self.prm = params
-        self.uart = pyb.UART(6, self.prm['baudrate'])
-        self.uart.init(self.prm['baudrate'], bits=self.prm['bits'], parity=self.prm['parity'], stop=self.prm['stop'])
-        self.timeout = 3000  # ms
+async def lineify():
+    """Consume processed frames and produces lines."""
+    while True:  # Consume processed frames indefinetely
+        processed_frame = await processed_frames.get()
+        reformatted_frame = dict()
+        for group in processed_frame:
+            reformatted_frame[group['label']] = dict()
+            reformatted_frame[group['label']]['data'] = group['data']
+            reformatted_frame[group['label']]['valid'] = checksum(group)
+        line = ujson.dumps(reformatted_frame)
+        lines.put_nowait(line)
 
-    def get_frame(self):
-        sp = StreamParser()
+
+async def write_lines(output_file, timeout):
+    """Write lines from the writing queue to the output file."""
+    DATA_AVAILABLE_LED.off()
+    with open(output_file, "w") as f:
         start = pyb.millis()
-        while pyb.millis() - start < self.timeout:
-            c = self.uart.readchar()
-            if c != -1:
-                status = sp.exec(c)
-                if status == StreamParser.FRAME_COMPLETE:
-                    return DataFormatter.format(Tic.get_groups(sp.frame))
-        return
-
-    @staticmethod
-    def get_groups(frame):
-        fp = FrameParser()
-        groups = []
-        for c in frame:
-            status = fp.exec(c)
-            if status == FrameParser.GROUP_AVAILABLE:
-                groups.append(fp.group)
-        return groups
+        while pyb.elapsed_millis(start) < timeout:  # Consume lines until timeout
+            line = await lines.get()
+            f.write(line + '\n')
+            print(line)
+    DATA_AVAILABLE_LED.on()
 
 
-def main(timeout):
-    tic = Tic(cfg['historic'])
-    start = pyb.millis()
-    exec_led = machine.Pin.board.LED_YELLOW
-    exec_led.on()
-    frames = []
-    while pyb.millis() - start < timeout:
-        frame = tic.get_frame()
-        if frame is not None:
-            frames.append(frame)
-            print(frame)
-    write_led = machine.Pin.board.LED_RED
-    write_led.on()
-    with open("json.txt", "w") as f:
-        for frame in frames:
-            f.write(ujson.dumps(frame) + '\n')
-    write_led.off()
-    exec_led.off()
+async def heartbeat(led, period):
+    """Make a HEARTBEAT_LED blink."""
+    while True:  # Blink indefinitely
+        led.on()
+        await asyncio.sleep_ms(period)
+        led.off()
+        await asyncio.sleep_ms(period)
 
 
-timeout = 100e3
-main(timeout)
+def main():
+    pyb.freq(84000000, 84000000, 21000000, 42000000)
+    loop = asyncio.get_event_loop()
+    loop.create_task(heartbeat(HEARTBEAT_LED, HEARTBEAT_PERIOD))
+    loop.create_task(produce_chars(CFG))
+    loop.create_task(produce_frames())
+    loop.create_task(process_frames())
+    loop.create_task(lineify())
+    loop.run_until_complete(write_lines(OUTPUT_FILE, TIMEOUT))
+
+
+if __name__ == "__main__":
+    if OUTPUT_FILE in os.listdir():
+        pyb.usb_mode('VCP+MSC')  # data file exists, connect to computer as mass storage
+    else:
+        pyb.usb_mode('VCP')  # only virtual COM port
+        main()
