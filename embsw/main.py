@@ -84,6 +84,10 @@ process_frames_active = False
 produce_lines_active = False
 write_lines_active = False
 
+# Sleep time for inactivity
+SLEEP_TIME_INACTIVE = 50  # (ms)
+SLEEP_TIME_ACTIVE = 10  # (ms)
+
 
 async def pulse_led(led, period):
     """Pulse a LED once."""
@@ -147,7 +151,7 @@ async def manage_device_state():
                 button_pressed = False
         else:
             print("Error.")
-        await asyncio.sleep_ms(50)
+        await asyncio.sleep_ms(SLEEP_TIME_INACTIVE)
 
 
 async def produce_chars(params):
@@ -163,7 +167,7 @@ async def produce_chars(params):
                 chars.put_nowait(d)
         else:
             chars = aqueues.Queue()  # empty output queue
-            await asyncio.sleep_ms(10)
+            await asyncio.sleep_ms(SLEEP_TIME_INACTIVE)
 
 
 async def produce_frames():
@@ -178,7 +182,7 @@ async def produce_frames():
                 c = chars.get_nowait()
                 print(type(c))
             except aqueues.QueueEmpty:
-                await asyncio.sleep_ms(10)
+                await asyncio.sleep_ms(SLEEP_TIME_ACTIVE)
             else:
                 if parser_state == PARSER_WAITING_FRAME:
                     if c == STX:
@@ -198,7 +202,7 @@ async def produce_frames():
 
         else:
             frames = aqueues.Queue()  # empty output queue
-            await asyncio.sleep_ms(50)
+            await asyncio.sleep_ms(SLEEP_TIME_INACTIVE)
 
 
 async def format_frames():
@@ -209,7 +213,7 @@ async def format_frames():
             try:
                 frame, status = frames.get_nowait()
             except aqueues.QueueEmpty:
-                await asyncio.sleep_ms(10)
+                await asyncio.sleep_ms(SLEEP_TIME_ACTIVE)
             else:
                 if status == FRAME_COMPLETE:
                     parser_state = PARSER_WAITING_GROUP
@@ -245,7 +249,7 @@ async def format_frames():
                     processed_frames.put_nowait(groups)
         else:
             processed_frames = aqueues.Queue()  # empty output queue
-            await asyncio.sleep_ms(50)
+            await asyncio.sleep_ms(SLEEP_TIME_INACTIVE)
 
 
 async def produce_lines():
@@ -263,10 +267,10 @@ async def produce_lines():
                 line = ujson.dumps(reformatted_frame)
                 lines.put_nowait(line)
             except aqueues.QueueEmpty:
-                await asyncio.sleep_ms(50)
+                await asyncio.sleep_ms(SLEEP_TIME_ACTIVE)
         else:
             lines = aqueues.Queue()  # empty output queue
-            await asyncio.sleep_ms(50)
+            await asyncio.sleep_ms(SLEEP_TIME_INACTIVE)
 
 
 async def write_lines(output_file):
@@ -281,7 +285,7 @@ async def write_lines(output_file):
             try:
                 line = lines.get_nowait()
             except aqueues.QueueEmpty:
-                await asyncio.sleep_ms(10)
+                await asyncio.sleep_ms(SLEEP_TIME_ACTIVE)
             else:
                 if f is not None:
                     f.write(line + '\n')
@@ -290,7 +294,7 @@ async def write_lines(output_file):
             if write_lines_active != previously_active and f is not None:
                 f.close()
             previously_active = write_lines_active
-            await asyncio.sleep_ms(50)
+            await asyncio.sleep_ms(SLEEP_TIME_INACTIVE)
 
 
 def main():
