@@ -74,9 +74,6 @@ frames = aqueues.Queue()
 processed_frames = aqueues.Queue()
 lines = aqueues.Queue()
 
-# Signal to stop shared between tasks
-running = True
-
 # Events to tell the state machine to start or stop recording
 button_pressed = False
 
@@ -279,7 +276,7 @@ async def write_lines(output_file):
     while True:
         if write_lines_active:
             if write_lines_active != previously_active:
-                f = open(output_file, "w")
+                f = open(output_file, "a")
             previously_active = write_lines_active
             try:
                 line = lines.get_nowait()
