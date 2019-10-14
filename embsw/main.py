@@ -60,6 +60,8 @@ PARSER_READING_CHECKSUM = 3
 # State manager states
 DEVICE_PAUSED = 0
 DEVICE_RECORDING = 1
+DEVICE_STARTING = 2
+DEVICE_PAUSING = 3
 
 # Switch states
 SWITCH_PRESSED = True
@@ -77,10 +79,21 @@ lines = aqueues.Queue()
 # Events to tell the state machine to start or stop recording
 button_pressed = False
 
-# Function activations
+# Function activation request/status
+FUNCTION_OFF = False
+FUNCTION_ON = True
+
+# Function activations request
+produce_chars_active_req = False
+produce_frames_active_req = False
+format_frames_active_req = False
+produce_lines_active_req = False
+write_lines_active_req = False
+
+# Function activation status
 produce_chars_active = False
 produce_frames_active = False
-process_frames_active = False
+format_frames_active = False
 produce_lines_active = False
 write_lines_active = False
 
@@ -120,67 +133,101 @@ async def manage_device_state():
     # Inputs
     global button_pressed
     # Outputs
-    global produce_chars_active
-    global produce_frames_active
-    global process_frames_active
-    global produce_lines_active
-    global write_lines_active
+    global produce_chars_active_req
+    global produce_frames_active_req
+    global format_frames_active_req
+    global produce_lines_active_req
+    global write_lines_active_req
     # State
     recorder_state = DEVICE_PAUSED
     while True:
         if recorder_state == DEVICE_PAUSED:
             RECORDING_LED.off()
-            produce_chars_active = False
-            produce_frames_active = False
-            process_frames_active = False
-            produce_lines_active = False
-            write_lines_active = False
             if button_pressed:
-                recorder_state = DEVICE_RECORDING
-                button_pressed = False
-
+                recorder_state = DEVICE_STARTING
         elif recorder_state == DEVICE_RECORDING:
             RECORDING_LED.on()
-            produce_chars_active = True
-            produce_frames_active = True
-            process_frames_active = True
-            produce_lines_active = True
-            write_lines_active = True
             if button_pressed:
+                recorder_state = DEVICE_PAUSING
+        elif recorder_state == DEVICE_STARTING:
+            produce_chars_active_req = FUNCTION_ON
+            produce_frames_active_req = FUNCTION_ON
+            format_frames_active_req = FUNCTION_ON
+            produce_lines_active_req = FUNCTION_ON
+            write_lines_active_req = FUNCTION_ON
+            if produce_chars_active_req == produce_chars_active \
+               and produce_frames_active_req == produce_frames_active \
+               and format_frames_active_req == format_frames_active \
+               and produce_lines_active_req == produce_lines_active \
+               and write_lines_active_req == write_lines_active:
+                recorder_state = DEVICE_RECORDING
+                button_pressed = False
+        elif recorder_state == DEVICE_PAUSING:
+            produce_chars_active_req = FUNCTION_OFF
+            produce_frames_active_req = FUNCTION_OFF
+            format_frames_active_req = FUNCTION_OFF
+            produce_lines_active_req = FUNCTION_OFF
+            write_lines_active_req = FUNCTION_OFF
+            if produce_chars_active_req == produce_chars_active \
+               and produce_frames_active_req == produce_frames_active \
+               and format_frames_active_req == format_frames_active \
+               and produce_lines_active_req == produce_lines_active \
+               and write_lines_active_req == write_lines_active:
                 recorder_state = DEVICE_PAUSED
                 button_pressed = False
         else:
             print("Error.")
-        await asyncio.sleep_ms(SLEEP_TIME_INACTIVE)
+        await asyncio.sleep_ms(SLEEP_TIME_ACTIVE)
 
 
 async def produce_chars(params):
+    # Inputs
+    global produce_chars_active_req
+    # Outputs
     global chars
+    global produce_chars_active
     """Produces chars from the TIC interface."""
     tic = pyb.UART(6, params['baudrate'])
-    tic.init(params['baudrate'], bits=params['bits'], parity=params['parity'], stop=params['stop'])
-    reader = asyncio.StreamReader(tic)
+
+    def tic_init():
+        tic.init(params['baudrate'], bits=params['bits'], parity=params['parity'], stop=params['stop'])
+    prev = not produce_chars_active_req
+    tic_init()
     while True:
-        if produce_chars_active:
-            data = await reader.read()
-            for d in data:
-                chars.put_nowait(d)
+        if produce_chars_active_req == FUNCTION_ON:
+            if prev != produce_chars_active_req:
+                tic_init()
+            produce_chars_active = FUNCTION_ON
+            data = tic.read()
+            if data is not None:
+                for d in data:
+                    chars.put_nowait(d)
+            prev = produce_chars_active_req
+            await asyncio.sleep_ms(SLEEP_TIME_ACTIVE)
         else:
+            if prev != produce_chars_active_req:
+                tic.deinit()
+            produce_chars_active = FUNCTION_OFF
             chars = aqueues.Queue()  # empty output queue
+            prev = produce_chars_active_req
             await asyncio.sleep_ms(SLEEP_TIME_INACTIVE)
 
 
 async def produce_frames():
     """Consume chars and produces frames."""
+    # Inputs
+    global produce_frames_active_req
+    # Outputs
     global frames
+    global produce_frames_active
+    # State
     frame = []
     parser_state = PARSER_WAITING_FRAME
     while True:
-        if process_frames_active:
+        if produce_frames_active_req == FUNCTION_ON:
+            produce_frames_active = FUNCTION_ON
             try:
-                print(type(chars))
                 c = chars.get_nowait()
-                print(type(c))
             except aqueues.QueueEmpty:
                 await asyncio.sleep_ms(SLEEP_TIME_ACTIVE)
             else:
@@ -199,17 +246,29 @@ async def produce_frames():
                         parser_state = PARSER_WAITING_FRAME
                     else:
                         frame.append(c)
-
+                else:
+                    print("Error")
         else:
-            frames = aqueues.Queue()  # empty output queue
+            produce_frames_active = FUNCTION_OFF
+            # empty output queue
+            frames = aqueues.Queue()
+            # reset parser state
+            frame = []
+            parser_state = PARSER_WAITING_FRAME
+            # wait before checking activity again
             await asyncio.sleep_ms(SLEEP_TIME_INACTIVE)
 
 
 async def format_frames():
-    """Consumes frames and produces lines."""
+    """Consumes frames and produces formatted frames."""
+    # Inputs
+    global format_frames_active_req
+    # Outputs
     global processed_frames
+    global format_frames_active
     while True:
-        if process_frames_active:
+        if format_frames_active_req == FUNCTION_ON:
+            format_frames_active = FUNCTION_ON
             try:
                 frame, status = frames.get_nowait()
             except aqueues.QueueEmpty:
@@ -248,17 +307,26 @@ async def format_frames():
                                 group['checksum'] += chr(c)
                     processed_frames.put_nowait(groups)
         else:
+            format_frames_active = FUNCTION_OFF
             processed_frames = aqueues.Queue()  # empty output queue
             await asyncio.sleep_ms(SLEEP_TIME_INACTIVE)
 
 
 async def produce_lines():
-    """Consume processed frames and produces lines."""
+    """Consume formatted frames and produces lines."""
+    # Inputs
+    global produce_lines_active_req
+    # Outputs
     global lines
+    global produce_lines_active
     while True:
-        if produce_lines_active:
+        if produce_lines_active_req == FUNCTION_ON:
+            produce_lines_active = FUNCTION_ON
             try:
                 processed_frame = processed_frames.get_nowait()
+            except aqueues.QueueEmpty:
+                await asyncio.sleep_ms(SLEEP_TIME_ACTIVE)
+            else:
                 reformatted_frame = dict()
                 for group in processed_frame:
                     reformatted_frame[group['label']] = dict()
@@ -266,22 +334,27 @@ async def produce_lines():
                     reformatted_frame[group['label']]['valid'] = checksum(group)
                 line = ujson.dumps(reformatted_frame)
                 lines.put_nowait(line)
-            except aqueues.QueueEmpty:
-                await asyncio.sleep_ms(SLEEP_TIME_ACTIVE)
         else:
+            produce_lines_active = FUNCTION_OFF
             lines = aqueues.Queue()  # empty output queue
             await asyncio.sleep_ms(SLEEP_TIME_INACTIVE)
 
 
 async def write_lines(output_file):
     """Write lines from the writing queue to the output file."""
-    previously_active = write_lines_active
+    # Input
+    global write_lines_active_req
+    # Outputs
+    global write_lines_active
     f = None
+    # State
+    previously_active = write_lines_active_req
     while True:
-        if write_lines_active:
-            if write_lines_active != previously_active:
+        if write_lines_active_req == FUNCTION_ON:
+            write_lines_active = FUNCTION_ON
+            if write_lines_active_req != previously_active:
                 f = open(output_file, "a")
-            previously_active = write_lines_active
+            previously_active = write_lines_active_req
             try:
                 line = lines.get_nowait()
             except aqueues.QueueEmpty:
@@ -291,9 +364,10 @@ async def write_lines(output_file):
                     f.write(line + '\n')
                     f.flush()
         else:
-            if write_lines_active != previously_active and f is not None:
+            write_lines_active = FUNCTION_OFF
+            if write_lines_active_req != previously_active and f is not None:
                 f.close()
-            previously_active = write_lines_active
+            previously_active = write_lines_active_req
             await asyncio.sleep_ms(SLEEP_TIME_INACTIVE)
 
 
