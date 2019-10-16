@@ -59,10 +59,11 @@ def import_file(data_file_entry, canvas):
     filename = data_file_entry.get()
     data = load_data(filename)
     power_raw = extract_data('PAPP', data)
+    time = extract_data('timestamp', data)
+    time_offset = [t/1000 - time[0]/1000 for t in time]
     power = list(map(int, power_raw))
     figure = plt.Figure(figsize=(5, 4), dpi=100)
-    figure.add_subplot(111).plot(power)
-    print(len(power))
+    figure.add_subplot(111).plot(time_offset, power)
 
     canvas.figure = figure
     canvas.draw()
