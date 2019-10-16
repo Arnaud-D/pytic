@@ -13,8 +13,6 @@ WINDOW_TITLE = "Visionneuse Linkycom"
 WINDOW_PADX = 0
 WINDOW_PADY = 0
 
-tick = "✓"
-
 
 def load_data(filename):
     """Load data from a file."""
@@ -23,15 +21,6 @@ def load_data(filename):
         for line in f.readlines():
             frames.append(json.loads(line))
     return frames
-
-
-def print_data(frames):
-    for frame in frames:
-        print("--- Start frame ---")
-        for k in frame:
-            print("{} {label:12}{value}".format("✓", label=k, value=frame[k]['data']))
-
-        print("--- End frame ---")
 
 
 def extract_data(label, frames):
@@ -50,12 +39,8 @@ def get_path(data_file_entry):
         data_file_entry.insert(0, file)
 
 
-figure = plt.Figure(figsize=(5, 4), dpi=100)
-
-
-def import_file(data_file_entry, canvas):
+def import_file(data_file_entry, canvas, figure):
     """Action when clicking on the import button."""
-    global figure
     filename = data_file_entry.get()
     data = load_data(filename)
     power_raw = extract_data('PAPP', data)
@@ -99,6 +84,7 @@ def main():
     import_button.grid(column=3, row=0, columnspan=2, padx=(10, 0))
 
     # View tab
+    figure = plt.Figure(figsize=(5, 4), dpi=100)
     canvas = FigureCanvasTkAgg(figure, master=view)
     canvas.draw()
     canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
@@ -111,7 +97,7 @@ def main():
         return get_path(data_file_entry)
 
     def import_button_action():
-        return import_file(data_file_entry, canvas)
+        return import_file(data_file_entry, canvas, figure)
 
     data_file_browse_button["command"] = data_file_browse_button_action
     import_button["command"] = import_button_action
