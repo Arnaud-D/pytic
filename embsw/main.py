@@ -223,6 +223,7 @@ async def produce_frames():
     # State
     frame = []
     parser_state = PARSER_WAITING_FRAME
+    start = pyb.millis()
     while True:
         if produce_frames_active_req == FUNCTION_ON:
             produce_frames_active = FUNCTION_ON
@@ -236,12 +237,10 @@ async def produce_frames():
                         frame = []
                         parser_state = PARSER_RECEIVING_FRAME
                 elif parser_state == PARSER_RECEIVING_FRAME:
-                    if c == ETX:
-                        frames.put_nowait((frame, FRAME_COMPLETE))
-                        asyncio.get_event_loop().call_soon(pulse_led(FRAME_RECEIVED_LED, FRAME_RECEIVED_PULSE_PERIOD))
-                        parser_state = PARSER_WAITING_FRAME
-                    elif c == EOT:
-                        frames.put_nowait((frame, FRAME_TRUNCATED))
+                    if c == ETX or c == EOT:
+                        frame_status = FRAME_COMPLETE if c == ETX else FRAME_TRUNCATED
+                        timestamp = pyb.elapsed_millis(start)
+                        frames.put_nowait((frame, frame_status, timestamp))
                         asyncio.get_event_loop().call_soon(pulse_led(FRAME_RECEIVED_LED, FRAME_RECEIVED_PULSE_PERIOD))
                         parser_state = PARSER_WAITING_FRAME
                     else:
@@ -270,7 +269,7 @@ async def format_frames():
         if format_frames_active_req == FUNCTION_ON:
             format_frames_active = FUNCTION_ON
             try:
-                frame, status = frames.get_nowait()
+                frame, status, timestamp = frames.get_nowait()
             except aqueues.QueueEmpty:
                 await asyncio.sleep_ms(SLEEP_TIME_ACTIVE)
             else:
@@ -305,7 +304,7 @@ async def format_frames():
                                 parser_state = PARSER_WAITING_GROUP
                             else:
                                 group['checksum'] += chr(c)
-                    processed_frames.put_nowait(groups)
+                    processed_frames.put_nowait((groups, timestamp))
         else:
             format_frames_active = FUNCTION_OFF
             processed_frames = aqueues.Queue()  # empty output queue
@@ -323,11 +322,14 @@ async def produce_lines():
         if produce_lines_active_req == FUNCTION_ON:
             produce_lines_active = FUNCTION_ON
             try:
-                processed_frame = processed_frames.get_nowait()
+                processed_frame, timestamp = processed_frames.get_nowait()
             except aqueues.QueueEmpty:
                 await asyncio.sleep_ms(SLEEP_TIME_ACTIVE)
             else:
                 reformatted_frame = dict()
+                reformatted_frame['timestamp'] = dict()
+                reformatted_frame['timestamp']['data'] = timestamp
+                reformatted_frame['timestamp']['valid'] = True
                 for group in processed_frame:
                     reformatted_frame[group['label']] = dict()
                     reformatted_frame[group['label']]['data'] = group['data']
