@@ -35,6 +35,9 @@ FRAME_RECEIVED_PULSE_PERIOD = 100
 # Diode for recording
 RECORDING_LED = machine.Pin.board.LED_RED
 
+# UART channel to use
+UART_CHANNEL = 3
+
 # Special symbols
 STX = 0x02
 ETX = 0x03
@@ -187,7 +190,7 @@ async def produce_chars(params):
     global chars
     global produce_chars_active
     """Produces chars from the TIC interface."""
-    tic = pyb.UART(6, params['baudrate'])
+    tic = pyb.UART(UART_CHANNEL, params['baudrate'])
 
     def tic_init():
         tic.init(params['baudrate'], bits=params['bits'], parity=params['parity'], stop=params['stop'])
@@ -374,7 +377,6 @@ async def write_lines(output_file):
 
 
 def main():
-    pyb.freq(84000000, 84000000, 21000000, 42000000)
     loop = asyncio.get_event_loop()
     loop.create_task(manage_device_state())
     loop.create_task(detect_button_press())
