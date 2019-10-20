@@ -3,7 +3,8 @@ import machine
 import uasyncio as asyncio
 import uasyncio.queues as aqueues
 import ujson
-import os
+import lib.aswitch as aswitch
+import token
 
 # Processing pipeline:
 # TIC -->[produce_chars]--> chars -->[produce_frames]--> frames -->[process_frame]--> processed_frames
@@ -25,15 +26,14 @@ standard_params = {'baudrate': 9600,
 CFG = historic_params
 OUTPUT_FILE = "data.json"
 
-# Diode for data availability
-DATA_AVAILABLE_LED = machine.Pin.board.LED_GREEN
+# LED meaning
+LED_RECORDER_MODE = machine.Pin.board.LED_GREEN
+LED_TRANSFER_MODE = machine.Pin.board.LED_BLUE
+LED_STATUS_RECORDING = machine.Pin.board.LED_RED
+LED_STATUS_STOPPED = machine.Pin.board.LED_YELLOW
+LED_FRAME_RECEIVED = machine.Pin.board.LED_YELLOW
 
-# Diode for frame reception
-FRAME_RECEIVED_LED = machine.Pin.board.LED_BLUE
 FRAME_RECEIVED_PULSE_PERIOD = 100
-
-# Diode for recording
-RECORDING_LED = machine.Pin.board.LED_RED
 
 # UART channel to use
 UART_CHANNEL = 3
@@ -65,13 +65,15 @@ DEVICE_PAUSED = 0
 DEVICE_RECORDING = 1
 DEVICE_STARTING = 2
 DEVICE_PAUSING = 3
+DEVICE_STOPPING = 4
+DEVICE_STOPPED = 5
 
 # Switch states
 SWITCH_PRESSED = True
 SWITCH_RELEASED = False
 
-# Switch debounce time
-BUTTON_DEBOUNCE = 50  # (ms)
+BUTTON_DEBOUNCE = 50  # Switch debounce duration (ms)
+BUTTON_LONGPRESS = 1000  # Long press duration (ms)
 
 # Queues for data exchange between asynchronous tasks
 chars = aqueues.Queue()
@@ -79,8 +81,9 @@ frames = aqueues.Queue()
 processed_frames = aqueues.Queue()
 lines = aqueues.Queue()
 
-# Events to tell the state machine to start or stop recording
+# Event flags for the state machine
 button_pressed = False
+long_press_detected = False
 
 # Function activation request/status
 FUNCTION_OFF = False
@@ -117,6 +120,12 @@ def checksum(group):
     return group['checksum'] == chr((sum(group['checkfield']) & 0x3F) + 0x20)
 
 
+def callback_long_press():
+    """Callback on detection of long press of the button."""
+    global long_press_detected
+    long_press_detected = True
+
+
 async def detect_button_press():
     """Detect a press on the USR button."""
     global button_pressed
@@ -135,6 +144,7 @@ async def manage_device_state():
     """Manage the state of the device (recording/paused)."""
     # Inputs
     global button_pressed
+    global long_press_detected
     # Outputs
     global produce_chars_active_req
     global produce_frames_active_req
@@ -145,12 +155,16 @@ async def manage_device_state():
     recorder_state = DEVICE_PAUSED
     while True:
         if recorder_state == DEVICE_PAUSED:
-            RECORDING_LED.off()
-            if button_pressed:
+            LED_STATUS_RECORDING.off()
+            if long_press_detected:
+                recorder_state = DEVICE_STOPPING
+            elif button_pressed:
                 recorder_state = DEVICE_STARTING
         elif recorder_state == DEVICE_RECORDING:
-            RECORDING_LED.on()
-            if button_pressed:
+            LED_STATUS_RECORDING.on()
+            if long_press_detected:
+                recorder_state = DEVICE_STOPPING
+            elif button_pressed:
                 recorder_state = DEVICE_PAUSING
         elif recorder_state == DEVICE_STARTING:
             produce_chars_active_req = FUNCTION_ON
@@ -178,6 +192,25 @@ async def manage_device_state():
                and write_lines_active_req == write_lines_active:
                 recorder_state = DEVICE_PAUSED
                 button_pressed = False
+        elif recorder_state == DEVICE_STOPPING:
+            produce_chars_active_req = FUNCTION_OFF
+            produce_frames_active_req = FUNCTION_OFF
+            format_frames_active_req = FUNCTION_OFF
+            produce_lines_active_req = FUNCTION_OFF
+            write_lines_active_req = FUNCTION_OFF
+            if produce_chars_active_req == produce_chars_active \
+                    and produce_frames_active_req == produce_frames_active \
+                    and format_frames_active_req == format_frames_active \
+                    and produce_lines_active_req == produce_lines_active \
+                    and write_lines_active_req == write_lines_active:
+                long_press_detected = False
+                if not token.exists():
+                    token.create()
+                recorder_state = DEVICE_STOPPED
+        elif recorder_state == DEVICE_STOPPED:
+            LED_STATUS_STOPPED.on()
+            LED_STATUS_RECORDING.off()
+
         else:
             print("Error.")
         await asyncio.sleep_ms(SLEEP_TIME_ACTIVE)
@@ -244,7 +277,7 @@ async def produce_frames():
                         frame_status = FRAME_COMPLETE if c == ETX else FRAME_TRUNCATED
                         timestamp = pyb.elapsed_millis(start)
                         frames.put_nowait((frame, frame_status, timestamp))
-                        asyncio.get_event_loop().call_soon(pulse_led(FRAME_RECEIVED_LED, FRAME_RECEIVED_PULSE_PERIOD))
+                        asyncio.get_event_loop().call_soon(pulse_led(LED_FRAME_RECEIVED, FRAME_RECEIVED_PULSE_PERIOD))
                         parser_state = PARSER_WAITING_FRAME
                     else:
                         frame.append(c)
@@ -380,6 +413,8 @@ def main():
     loop = asyncio.get_event_loop()
     loop.create_task(manage_device_state())
     loop.create_task(detect_button_press())
+    button = aswitch.Pushbutton(machine.Pin.board.SW)
+    button.long_func(callback_long_press)
     loop.create_task(produce_chars(CFG))
     loop.create_task(produce_frames())
     loop.create_task(format_frames())
@@ -389,9 +424,8 @@ def main():
 
 
 if __name__ == "__main__":
-    if OUTPUT_FILE in os.listdir():
-        pyb.usb_mode('VCP+MSC')  # data file exists, connect to computer as mass storage
-        DATA_AVAILABLE_LED.on()
-    else:
-        pyb.usb_mode('VCP')  # only virtual COM port
+    if pyb.usb_mode() == "MSC":  # Board started in "computer mode"
+        LED_TRANSFER_MODE.on()
+    else:  # Board started
+        LED_RECORDER_MODE.on()
         main()

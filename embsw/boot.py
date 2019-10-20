@@ -1,2 +1,8 @@
 import pyb
-pyb.main('main.py')  # main script to run after this one
+import token
+pyb.main('main.py')
+if token.exists():
+    pyb.usb_mode("MSC")
+    token.delete()
+else:
+    pyb.usb_mode("VCP")
