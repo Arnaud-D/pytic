@@ -26,9 +26,11 @@ def load_data(filename):
 def extract_data(label, frames):
     """Extract the data corresponding to a label from a dataset."""
     data = []
+    validity = []
     for frame in frames:
         data.append(frame[label]['data'])
-    return data
+        validity.append(frame[label]['valid'])
+    return data, validity
 
 
 def get_path(data_file_entry):
@@ -43,12 +45,15 @@ def import_file(data_file_entry, canvas, figure):
     """Action when clicking on the import button."""
     filename = data_file_entry.get()
     data = load_data(filename)
-    power_raw = extract_data('PAPP', data)
-    time = extract_data('timestamp', data)
+    power_str, validity = extract_data('PAPP', data)
+    time, _ = extract_data('timestamp', data)
     time_offset = [t/1000 - time[0]/1000 for t in time]
-    power = list(map(int, power_raw))
+    power = list(map(int, power_str))
     figure = plt.Figure(figsize=(5, 4), dpi=100)
     figure.add_subplot(111).plot(time_offset, power)
+    validity_markers_invalid = [power[i] for i in range(len(validity)) if not validity[i]]
+    time_markers_invalid = [time_offset[i] for i in range(len(validity)) if not validity[i]]
+    figure.gca().plot(time_markers_invalid, validity_markers_invalid, 'r. ')
 
     canvas.figure = figure
     canvas.draw()
