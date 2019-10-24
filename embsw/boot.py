@@ -1,8 +1,8 @@
 import pyb
-import token
+import utoken
 pyb.main('main.py')
-if token.exists():
+if utoken.exists():
     pyb.usb_mode("MSC")
-    token.delete()
+    utoken.delete()
 else:
     pyb.usb_mode("VCP")
