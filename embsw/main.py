@@ -25,7 +25,9 @@ def main():
 
 
 def logger_mode():
-    logger = log.Logger(CFG,
+    logger = log.Logger(asyncio.get_event_loop(),
+                        "reduced",
+                        CFG,
                         UART_CHANNEL,
                         OUTPUT_FILE,
                         SLEEP_TIME_ACTIVE,
@@ -39,7 +41,6 @@ def logger_mode():
                           fb.feedback_stopped)
     loop = asyncio.get_event_loop()
     manager.schedule(loop)
-    logger.schedule(loop)
     loop.create_task(input.detect_button_press(manager))
     button = aswitch.Pushbutton(machine.Pin.board.SW)
     button.long_func(lambda: input.callback_long_press(manager))

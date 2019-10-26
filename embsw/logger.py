@@ -52,7 +52,20 @@ def checksum(group):
 
 
 class Logger:
-    def __init__(self, cfg, channel, filename, active_wait_time, inactive_wait_time, on_reception):
+    def __init__(self, loop, logtype, cfg, channel, filename, active_wait_time, inactive_wait_time, on_reception):
+        self.loop = loop
+
+        loop.create_task(self.produce_chars())
+        loop.create_task(self.produce_frames())
+        loop.create_task(self.format_frames())
+        loop.create_task(self.write_lines())
+        if logtype == "full":
+            loop.create_task(self.produce_lines_full())
+        elif logtype == "reduced":
+            loop.create_task(self.produce_lines_reduced())
+        else:
+            raise ValueError("'{}' is not a correct value for argument cfg.".format(cfg))
+
         if cfg == "historic":
             self._cfg = CFG_HISTORIC
         elif cfg == "standard":
@@ -190,7 +203,7 @@ class Logger:
                 except aqueues.QueueEmpty:
                     await asyncio.sleep_ms(self.active_wait_time)
                 else:
-                    if status == FRAME_COMPLETE:
+                    if status == FRAME_COMPLETE:  # Filter out truncated frames
                         parser_state = FP_WAITING_GROUP
                         groups = []
                         group = dict()
@@ -227,8 +240,8 @@ class Logger:
                 self.processed_frames = aqueues.Queue()
                 await asyncio.sleep_ms(self.inactive_wait_time)
 
-    async def produce_lines(self):
-        """Consume formatted frames and produces lines."""
+    async def produce_lines_full(self):
+        """Produce lines (full info)."""
         while True:
             if self.activation_requested:
                 self.produce_lines_active = True
@@ -252,13 +265,44 @@ class Logger:
                 self.lines = aqueues.Queue()
                 await asyncio.sleep_ms(self.inactive_wait_time)
 
+    async def produce_lines_reduced(self):
+        """Produce lines (reduced information)."""
+        while True:
+            if self.activation_requested:
+                self.produce_lines_active = True
+                try:
+                    processed_frame, timestamp = self.processed_frames.get_nowait()
+                except aqueues.QueueEmpty:
+                    await asyncio.sleep_ms(self.active_wait_time)
+                else:
+                    reformatted_frame = dict()
+                    reformatted_frame['timestamp'] = dict()
+                    reformatted_frame['timestamp']['data'] = timestamp
+                    reformatted_frame['timestamp']['valid'] = True
+                    for group in processed_frame:
+                        reformatted_frame[group['label']] = dict()
+                        reformatted_frame[group['label']]['data'] = group['data']
+                        reformatted_frame[group['label']]['valid'] = checksum(group)
+                    reduced_frame = dict()
+                    all_valid = True
+                    for label in ['timestamp', 'BASE', 'PAPP']:
+                        reduced_frame[label] = int(reformatted_frame[label]['data'])
+                        all_valid = all_valid and reformatted_frame[label]['valid']
+                    line = "{}, {}, {}".format(reduced_frame['timestamp'], reduced_frame['BASE'], reduced_frame['PAPP'])
+                    if all_valid:
+                        self.lines.put_nowait(line)
+            else:
+                self.produce_lines_active = False
+                self.lines = aqueues.Queue()
+                await asyncio.sleep_ms(self.inactive_wait_time)
+
     async def write_lines(self):
         """Write lines from the writing queue to the output file."""
         file = None
         while True:
             if self.activation_requested:
                 self.write_lines_active = True
-                if file is None or file.closed:
+                if file is None:
                     file = open(self.filename, "a")
                 try:
                     line = self.lines.get_nowait()
@@ -270,13 +314,7 @@ class Logger:
                         file.flush()
             else:
                 self.write_lines_active = False
-                if file is not None and not file.closed:
+                if file is not None:
                     file.close()
+                    file = None
                 await asyncio.sleep_ms(self.inactive_wait_time)
-
-    def schedule(self, loop):
-        loop.create_task(self.produce_chars())
-        loop.create_task(self.produce_frames())
-        loop.create_task(self.format_frames())
-        loop.create_task(self.produce_lines())
-        loop.create_task(self.write_lines())
