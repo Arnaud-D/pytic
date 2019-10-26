@@ -61,23 +61,23 @@ class Logger:
             raise ValueError("'{}' is not a correct value for argument cfg.".format(cfg))
 
         self._channel = channel
-        self._filename = filename
+        self.filename = filename
 
         # Queues for data exchange between asynchronous tasks
         self._chars = aqueues.Queue()
-        self._frames = aqueues.Queue()
-        self._processed_frames = aqueues.Queue()
-        self._lines = aqueues.Queue()
+        self.frames = aqueues.Queue()
+        self.processed_frames = aqueues.Queue()
+        self.lines = aqueues.Queue()
 
         # Logger activation request
-        self._activation_requested = False
+        self.activation_requested = False
 
         # Function activation statuses
         self._produce_chars_active = False
         self._produce_frames_active = False
-        self._format_frames_active = False
-        self._produce_lines_active = False
-        self._write_lines_active = False
+        self.format_frames_active = False
+        self.produce_lines_active = False
+        self.write_lines_active = False
 
         # Wait times
         self.active_wait_time = active_wait_time
@@ -88,29 +88,29 @@ class Logger:
 
     def activate(self):
         """Request the activation of the logger."""
-        self._activation_requested = True
+        self.activation_requested = True
 
     def deactivate(self):
         """Request the deactivation of the logger."""
-        self._activation_requested = False
+        self.activation_requested = False
 
     def status(self):
         """Return the status of the logger (active, inactive, activating, deactivating)."""
-        if self._activation_requested:
+        if self.activation_requested:
             if self._produce_chars_active \
                and self._produce_frames_active \
-               and self._format_frames_active \
-               and self._produce_lines_active \
-               and self._write_lines_active:
+               and self.format_frames_active \
+               and self.produce_lines_active \
+               and self.write_lines_active:
                 return LOGGER_ACTIVE
             else:
                 return LOGGER_ACTIVATING
         else:
             if not self._produce_chars_active \
                and not self._produce_frames_active \
-               and not self._format_frames_active \
-               and not self._produce_lines_active \
-               and not self._write_lines_active:
+               and not self.format_frames_active \
+               and not self.produce_lines_active \
+               and not self.write_lines_active:
                 return LOGGER_INACTIVE
             else:
                 return LOGGER_DEACTIVATING
@@ -124,69 +124,69 @@ class Logger:
                      bits=self._cfg['bits'],
                      parity=self._cfg['parity'],
                      stop=self._cfg['stop'])
-        prev = not self._activation_requested
+        prev = not self.activation_requested
         tic_init()
         while True:
-            if self._activation_requested:
-                if prev != self._activation_requested:
+            if self.activation_requested:
+                if prev != self.activation_requested:
                     tic_init()
                 self._produce_chars_active = True
                 data = tic.read()
                 if data is not None:
                     for d in data:
                         self._chars.put_nowait(d)
-                prev = self._activation_requested
+                prev = self.activation_requested
                 await asyncio.sleep_ms(self.active_wait_time)
             else:
-                if prev != self._activation_requested:
+                if prev != self.activation_requested:
                     tic.deinit()
                 self._produce_chars_active = False
-                self._chars = aqueues.Queue()  # empty output queue
-                prev = self._activation_requested
+                self._chars = aqueues.Queue()
+                prev = self.activation_requested
                 await asyncio.sleep_ms(self.inactive_wait_time)
 
     async def produce_frames(self):
         """Consume chars and produces frames."""
         frame = []
-        parser_state = SP_WAITING
+        state = SP_WAITING
         start = pyb.millis()
         while True:
-            if self._activation_requested:
+            if self.activation_requested:
                 self._produce_frames_active = True
                 try:
                     c = self._chars.get_nowait()
                 except aqueues.QueueEmpty:
                     await asyncio.sleep_ms(self.active_wait_time)
                 else:
-                    if parser_state == SP_WAITING:
+                    if state == SP_WAITING:
                         if c == SYM_STX:
                             frame = []
-                            parser_state = SP_RECEIVING
-                    elif parser_state == SP_RECEIVING:
+                            state = SP_RECEIVING
+                    elif state == SP_RECEIVING:
                         if c == SYM_ETX or c == SYM_EOT:
                             frame_status = FRAME_COMPLETE if c == SYM_ETX else FRAME_TRUNCATED
                             timestamp = pyb.elapsed_millis(start)
-                            self._frames.put_nowait((frame, frame_status, timestamp))
+                            self.frames.put_nowait((frame, frame_status, timestamp))
                             self.on_reception()
-                            parser_state = SP_WAITING
+                            state = SP_WAITING
                         else:
                             frame.append(c)
                     else:
                         print("Error")
             else:
                 self._produce_frames_active = False
-                self._frames = aqueues.Queue()
+                self.frames = aqueues.Queue()
                 frame = []
-                parser_state = SP_WAITING
+                state = SP_WAITING
                 await asyncio.sleep_ms(self.inactive_wait_time)
 
     async def format_frames(self):
         """Consumes frames and produces formatted frames."""
         while True:
-            if self._activation_requested:
-                self._format_frames_active = True
+            if self.activation_requested:
+                self.format_frames_active = True
                 try:
-                    frame, status, timestamp = self._frames.get_nowait()
+                    frame, status, timestamp = self.frames.get_nowait()
                 except aqueues.QueueEmpty:
                     await asyncio.sleep_ms(self.active_wait_time)
                 else:
@@ -221,19 +221,19 @@ class Logger:
                                     parser_state = FP_WAITING_GROUP
                                 else:
                                     group['checksum'] += chr(c)
-                        self._processed_frames.put_nowait((groups, timestamp))
+                        self.processed_frames.put_nowait((groups, timestamp))
             else:
-                self._format_frames_active = False
-                self._processed_frames = aqueues.Queue()  # empty output queue
+                self.format_frames_active = False
+                self.processed_frames = aqueues.Queue()
                 await asyncio.sleep_ms(self.inactive_wait_time)
 
     async def produce_lines(self):
         """Consume formatted frames and produces lines."""
         while True:
-            if self._activation_requested:
-                self._produce_lines_active = True
+            if self.activation_requested:
+                self.produce_lines_active = True
                 try:
-                    processed_frame, timestamp = self._processed_frames.get_nowait()
+                    processed_frame, timestamp = self.processed_frames.get_nowait()
                 except aqueues.QueueEmpty:
                     await asyncio.sleep_ms(self.active_wait_time)
                 else:
@@ -246,24 +246,22 @@ class Logger:
                         reformatted_frame[group['label']]['data'] = group['data']
                         reformatted_frame[group['label']]['valid'] = checksum(group)
                     line = ujson.dumps(reformatted_frame)
-                    self._lines.put_nowait(line)
+                    self.lines.put_nowait(line)
             else:
-                self._produce_lines_active = False
-                self._lines = aqueues.Queue()  # empty output queue
+                self.produce_lines_active = False
+                self.lines = aqueues.Queue()
                 await asyncio.sleep_ms(self.inactive_wait_time)
 
     async def write_lines(self):
         """Write lines from the writing queue to the output file."""
         file = None
-        previously_active = self._activation_requested
         while True:
-            if self._activation_requested:
-                self._write_lines_active = True
-                if self._activation_requested != previously_active:
-                    file = open(self._filename, "a")
-                previously_active = self._activation_requested
+            if self.activation_requested:
+                self.write_lines_active = True
+                if file is None or file.closed:
+                    file = open(self.filename, "a")
                 try:
-                    line = self._lines.get_nowait()
+                    line = self.lines.get_nowait()
                 except aqueues.QueueEmpty:
                     await asyncio.sleep_ms(self.active_wait_time)
                 else:
@@ -271,10 +269,9 @@ class Logger:
                         file.write(line + "\n")
                         file.flush()
             else:
-                self._write_lines_active = False
-                if self._activation_requested != previously_active and file is not None:
+                self.write_lines_active = False
+                if file is not None and not file.closed:
                     file.close()
-                previously_active = self._activation_requested
                 await asyncio.sleep_ms(self.inactive_wait_time)
 
     def schedule(self, loop):
