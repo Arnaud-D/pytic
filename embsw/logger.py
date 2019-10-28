@@ -2,6 +2,7 @@ import pyb
 import uasyncio as asyncio
 import uasyncio.queues as aqueues
 import ujson
+import ure
 
 # Special symbols
 SYM_STX = 0x02
@@ -30,10 +31,8 @@ FRAME_COMPLETE = 0
 FRAME_TRUNCATED = 1
 
 # States of the frame parser
-FP_WAITING_GROUP = 0
-FP_READING_LABEL = 1
-FP_READING_DATA = 2
-FP_READING_CHECKSUM = 3
+FP_WAITING = 0
+FP_READING = 1
 
 # Status of the logger
 LOGGER_INACTIVE = 0
@@ -48,13 +47,12 @@ LOGGER_DEACTIVATING = 3
 
 def checksum(group):
     """Compute the checksum for a data group."""
-    return group['checksum'] == chr((sum(group['checkfield']) & 0x3F) + 0x20)
+    return group['checksum'] == chr((sum([ord(c) for c in group['checkfield']]) & 0x3F) + 0x20)
 
 
 class Logger:
     def __init__(self, loop, logtype, cfg, channel, filename, active_wait_time, inactive_wait_time, on_reception):
         self.loop = loop
-
         loop.create_task(self.produce_chars())
         loop.create_task(self.produce_frames())
         loop.create_task(self.format_frames())
@@ -67,13 +65,17 @@ class Logger:
             raise ValueError("'{}' is not a correct value for argument cfg.".format(cfg))
 
         if cfg == "historic":
-            self._cfg = CFG_HISTORIC
+            self.cfg = CFG_HISTORIC
+            self.regex_payload = ure.compile("([^ ]+) (.+) .")
+            self.regex_check = ure.compile("(.+) (.)")
         elif cfg == "standard":
-            self._cfg = CFG_STANDARD
+            self.cfg = CFG_STANDARD
+            self.regex_payload = ure.compile("([^ ]+) (.+) .")  # TODO: adapt for standard mode
+            self.regex_check = ure.compile("(.+) (.)")  # TODO: adapt for standard mode
         else:
             raise ValueError("'{}' is not a correct value for argument cfg.".format(cfg))
 
-        self._channel = channel
+        self.channel = channel
         self.filename = filename
 
         # Queues for data exchange between asynchronous tasks
@@ -130,13 +132,13 @@ class Logger:
 
     async def produce_chars(self):
         """Produces chars from the TIC interface."""
-        tic = pyb.UART(self._channel, self._cfg['baudrate'])
+        tic = pyb.UART(self.channel, self.cfg['baudrate'])
 
         def tic_init():
-            tic.init(self._cfg['baudrate'],
-                     bits=self._cfg['bits'],
-                     parity=self._cfg['parity'],
-                     stop=self._cfg['stop'])
+            tic.init(self.cfg['baudrate'],
+                     bits=self.cfg['bits'],
+                     parity=self.cfg['parity'],
+                     stop=self.cfg['stop'])
         prev = not self.activation_requested
         tic_init()
         while True:
@@ -204,36 +206,21 @@ class Logger:
                     await asyncio.sleep_ms(self.active_wait_time)
                 else:
                     if status == FRAME_COMPLETE:  # Filter out truncated frames
-                        parser_state = FP_WAITING_GROUP
                         groups = []
-                        group = dict()
+                        buffer = ""
                         for c in frame:
-                            if parser_state == FP_WAITING_GROUP:
-                                if c == SYM_LF:
-                                    group = dict()
-                                    group['label'] = ""
-                                    group['data'] = ""
-                                    group['checksum'] = ""
-                                    group['checkfield'] = []
-                                    parser_state = FP_READING_LABEL
-                            elif parser_state == FP_READING_LABEL:
-                                group['checkfield'].append(c)
-                                if c == SYM_SP:
-                                    parser_state = FP_READING_DATA
-                                else:
-                                    group['label'] += chr(c)
-                            elif parser_state == FP_READING_DATA:
-                                if c == SYM_SP:
-                                    parser_state = FP_READING_CHECKSUM
-                                else:
-                                    group['data'] += chr(c)
-                                    group['checkfield'].append(c)
-                            elif parser_state == FP_READING_CHECKSUM:
-                                if c == SYM_CR:
-                                    groups.append(group)
-                                    parser_state = FP_WAITING_GROUP
-                                else:
-                                    group['checksum'] += chr(c)
+                            if c == SYM_LF:
+                                buffer = ""
+                            elif c == SYM_CR:
+                                match_payload = self.regex_payload.match(buffer)
+                                match_check = self.regex_check.match(buffer)
+                                group = {'label': match_payload.group(1),
+                                         'data': match_payload.group(2),
+                                         'checkfield': match_check.group(1),
+                                         'checksum': match_check.group(2)}
+                                groups.append(group)
+                            else:
+                                buffer += chr(c)
                         self.processed_frames.put_nowait((groups, timestamp))
             else:
                 self.format_frames_active = False
@@ -251,13 +238,9 @@ class Logger:
                     await asyncio.sleep_ms(self.active_wait_time)
                 else:
                     reformatted_frame = dict()
-                    reformatted_frame['timestamp'] = dict()
-                    reformatted_frame['timestamp']['data'] = timestamp
-                    reformatted_frame['timestamp']['valid'] = True
+                    reformatted_frame['timestamp'] = {'data': timestamp, 'valid': True}
                     for group in processed_frame:
-                        reformatted_frame[group['label']] = dict()
-                        reformatted_frame[group['label']]['data'] = group['data']
-                        reformatted_frame[group['label']]['valid'] = checksum(group)
+                        reformatted_frame[group['label']] = {'data': group['data'], 'valid': checksum(group)}
                     line = ujson.dumps(reformatted_frame)
                     self.lines.put_nowait(line)
             else:
@@ -276,13 +259,9 @@ class Logger:
                     await asyncio.sleep_ms(self.active_wait_time)
                 else:
                     reformatted_frame = dict()
-                    reformatted_frame['timestamp'] = dict()
-                    reformatted_frame['timestamp']['data'] = timestamp
-                    reformatted_frame['timestamp']['valid'] = True
+                    reformatted_frame['timestamp'] = {'data': timestamp, 'valid': True}
                     for group in processed_frame:
-                        reformatted_frame[group['label']] = dict()
-                        reformatted_frame[group['label']]['data'] = group['data']
-                        reformatted_frame[group['label']]['valid'] = checksum(group)
+                        reformatted_frame[group['label']] = {'data': group['data'], 'valid': checksum(group)}
                     reduced_frame = dict()
                     all_valid = True
                     for label in ['timestamp', 'BASE', 'PAPP']:
