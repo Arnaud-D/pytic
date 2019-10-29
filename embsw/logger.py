@@ -53,14 +53,12 @@ def checksum(group):
 class Logger:
     def __init__(self, loop, logtype, cfg, channel, filename, active_wait_time, inactive_wait_time, on_reception):
         self.loop = loop
-        loop.create_task(self.produce_chars())
-        loop.create_task(self.produce_frames())
-        loop.create_task(self.format_frames())
-        loop.create_task(self.write_lines())
+        loop.create_task(self.read_chars())
+        loop.create_task(self.write_frames())
         if logtype == "full":
-            loop.create_task(self.produce_lines_full())
+            self.make_line = self.make_line_full
         elif logtype == "reduced":
-            loop.create_task(self.produce_lines_reduced())
+            self.make_line = self.make_line_reduced
         else:
             raise ValueError("'{}' is not a correct value for argument cfg.".format(cfg))
 
@@ -78,21 +76,15 @@ class Logger:
         self.channel = channel
         self.filename = filename
 
-        # Queues for data exchange between asynchronous tasks
-        self._chars = aqueues.Queue()
-        self.frames = aqueues.Queue()
-        self.processed_frames = aqueues.Queue()
-        self.lines = aqueues.Queue()
+        # Queue for data exchange between asynchronous tasks
+        self.chars = aqueues.Queue()
 
         # Logger activation request
         self.activation_requested = False
 
         # Function activation statuses
-        self._produce_chars_active = False
-        self._produce_frames_active = False
-        self.format_frames_active = False
-        self.produce_lines_active = False
-        self.write_lines_active = False
+        self.produce_chars_active = False
+        self.write_frames_active = False
 
         # Wait times
         self.active_wait_time = active_wait_time
@@ -112,26 +104,20 @@ class Logger:
     def status(self):
         """Return the status of the logger (active, inactive, activating, deactivating)."""
         if self.activation_requested:
-            if self._produce_chars_active \
-               and self._produce_frames_active \
-               and self.format_frames_active \
-               and self.produce_lines_active \
-               and self.write_lines_active:
+            if self.produce_chars_active \
+               and self.write_frames_active:
                 return LOGGER_ACTIVE
             else:
                 return LOGGER_ACTIVATING
         else:
-            if not self._produce_chars_active \
-               and not self._produce_frames_active \
-               and not self.format_frames_active \
-               and not self.produce_lines_active \
-               and not self.write_lines_active:
+            if not self.produce_chars_active \
+               and not self.write_frames_active:
                 return LOGGER_INACTIVE
             else:
                 return LOGGER_DEACTIVATING
 
-    async def produce_chars(self):
-        """Produces chars from the TIC interface."""
+    async def read_chars(self):
+        """Read chars from the TIC interface."""
         tic = pyb.UART(self.channel, self.cfg['baudrate'])
 
         def tic_init():
@@ -145,31 +131,34 @@ class Logger:
             if self.activation_requested:
                 if prev != self.activation_requested:
                     tic_init()
-                self._produce_chars_active = True
+                self.produce_chars_active = True
                 data = tic.read()
                 if data is not None:
                     for d in data:
-                        self._chars.put_nowait(d)
+                        self.chars.put_nowait(d)
                 prev = self.activation_requested
                 await asyncio.sleep_ms(self.active_wait_time)
             else:
                 if prev != self.activation_requested:
                     tic.deinit()
-                self._produce_chars_active = False
-                self._chars = aqueues.Queue()
+                self.produce_chars_active = False
+                self.chars = aqueues.Queue()
                 prev = self.activation_requested
                 await asyncio.sleep_ms(self.inactive_wait_time)
 
-    async def produce_frames(self):
-        """Consume chars and produces frames."""
+    async def write_frames(self):
+        """Write frames to the file."""
         frame = []
         state = SP_WAITING
         start = pyb.millis()
+        file = None
         while True:
             if self.activation_requested:
-                self._produce_frames_active = True
+                self.write_frames_active = True
+                if file is None:
+                    file = open(self.filename, "a")
                 try:
-                    c = self._chars.get_nowait()
+                    c = self.chars.get_nowait()
                 except aqueues.QueueEmpty:
                     await asyncio.sleep_ms(self.active_wait_time)
                 else:
@@ -181,7 +170,7 @@ class Logger:
                         if c == SYM_ETX or c == SYM_EOT:
                             frame_status = FRAME_COMPLETE if c == SYM_ETX else FRAME_TRUNCATED
                             timestamp = pyb.elapsed_millis(start)
-                            self.frames.put_nowait((frame, frame_status, timestamp))
+                            self.write_frame(file, frame, frame_status, timestamp)
                             self.on_reception()
                             state = SP_WAITING
                         else:
@@ -189,111 +178,68 @@ class Logger:
                     else:
                         print("Error")
             else:
-                self._produce_frames_active = False
-                self.frames = aqueues.Queue()
+                self.write_frames_active = False
+                if file is not None:
+                    file.close()
+                    file = None
                 frame = []
                 state = SP_WAITING
                 await asyncio.sleep_ms(self.inactive_wait_time)
 
-    async def format_frames(self):
-        """Consumes frames and produces formatted frames."""
-        while True:
-            if self.activation_requested:
-                self.format_frames_active = True
-                try:
-                    frame, status, timestamp = self.frames.get_nowait()
-                except aqueues.QueueEmpty:
-                    await asyncio.sleep_ms(self.active_wait_time)
-                else:
-                    if status == FRAME_COMPLETE:  # Filter out truncated frames
-                        groups = []
-                        buffer = ""
-                        for c in frame:
-                            if c == SYM_LF:
-                                buffer = ""
-                            elif c == SYM_CR:
-                                match_payload = self.regex_payload.match(buffer)
-                                match_check = self.regex_check.match(buffer)
-                                group = {'label': match_payload.group(1),
-                                         'data': match_payload.group(2),
-                                         'checkfield': match_check.group(1),
-                                         'checksum': match_check.group(2)}
-                                groups.append(group)
-                            else:
-                                buffer += chr(c)
-                        self.processed_frames.put_nowait((groups, timestamp))
-            else:
-                self.format_frames_active = False
-                self.processed_frames = aqueues.Queue()
-                await asyncio.sleep_ms(self.inactive_wait_time)
+    def write_frame(self, file, frame, status, timestamp):
+        """Write a frame to a file."""
+        groups = self.extract_groups(frame, status)
+        line = self.make_line(groups, timestamp)
+        self.write_line(file, line)
 
-    async def produce_lines_full(self):
-        """Produce lines (full info)."""
-        while True:
-            if self.activation_requested:
-                self.produce_lines_active = True
-                try:
-                    processed_frame, timestamp = self.processed_frames.get_nowait()
-                except aqueues.QueueEmpty:
-                    await asyncio.sleep_ms(self.active_wait_time)
+    def extract_groups(self, frame, status):
+        """Parse a frame to extract the groups."""
+        if status == FRAME_COMPLETE:  # Filter out truncated frames
+            groups = []
+            buffer = ""
+            for c in frame:
+                if c == SYM_LF:
+                    buffer = ""
+                elif c == SYM_CR:
+                    match_payload = self.regex_payload.match(buffer)
+                    match_check = self.regex_check.match(buffer)
+                    group = {'label': match_payload.group(1),
+                             'data': match_payload.group(2),
+                             'checkfield': match_check.group(1),
+                             'checksum': match_check.group(2)}
+                    groups.append(group)
                 else:
-                    reformatted_frame = dict()
-                    reformatted_frame['timestamp'] = {'data': timestamp, 'valid': True}
-                    for group in processed_frame:
-                        reformatted_frame[group['label']] = {'data': group['data'], 'valid': checksum(group)}
-                    line = ujson.dumps(reformatted_frame)
-                    self.lines.put_nowait(line)
-            else:
-                self.produce_lines_active = False
-                self.lines = aqueues.Queue()
-                await asyncio.sleep_ms(self.inactive_wait_time)
+                    buffer += chr(c)
+            return groups
 
-    async def produce_lines_reduced(self):
-        """Produce lines (reduced information)."""
-        while True:
-            if self.activation_requested:
-                self.produce_lines_active = True
-                try:
-                    processed_frame, timestamp = self.processed_frames.get_nowait()
-                except aqueues.QueueEmpty:
-                    await asyncio.sleep_ms(self.active_wait_time)
-                else:
-                    reformatted_frame = dict()
-                    reformatted_frame['timestamp'] = {'data': timestamp, 'valid': True}
-                    for group in processed_frame:
-                        reformatted_frame[group['label']] = {'data': group['data'], 'valid': checksum(group)}
-                    reduced_frame = dict()
-                    all_valid = True
-                    for label in ['timestamp', 'BASE', 'PAPP']:
-                        reduced_frame[label] = int(reformatted_frame[label]['data'])
-                        all_valid = all_valid and reformatted_frame[label]['valid']
-                    line = "{}, {}, {}".format(reduced_frame['timestamp'], reduced_frame['BASE'], reduced_frame['PAPP'])
-                    if all_valid:
-                        self.lines.put_nowait(line)
-            else:
-                self.produce_lines_active = False
-                self.lines = aqueues.Queue()
-                await asyncio.sleep_ms(self.inactive_wait_time)
+    @staticmethod
+    def make_line_full(groups, timestamp):
+        """Produce a line from a processed frame with timestamp (full information)."""
+        reformatted_frame = dict()
+        reformatted_frame['timestamp'] = {'data': timestamp, 'valid': True}
+        for group in groups:
+            reformatted_frame[group['label']] = {'data': group['data'], 'valid': checksum(group)}
+        line = ujson.dumps(reformatted_frame) + "\n"
+        return line
 
-    async def write_lines(self):
-        """Write lines from the writing queue to the output file."""
-        file = None
-        while True:
-            if self.activation_requested:
-                self.write_lines_active = True
-                if file is None:
-                    file = open(self.filename, "a")
-                try:
-                    line = self.lines.get_nowait()
-                except aqueues.QueueEmpty:
-                    await asyncio.sleep_ms(self.active_wait_time)
-                else:
-                    if file is not None:
-                        file.write(line + "\n")
-                        file.flush()
-            else:
-                self.write_lines_active = False
-                if file is not None:
-                    file.close()
-                    file = None
-                await asyncio.sleep_ms(self.inactive_wait_time)
+    @staticmethod
+    def make_line_reduced(groups, timestamp):
+        """Make a line from a processed frame with timestamp (reduced information)."""
+        reformatted_frame = dict()
+        reformatted_frame['timestamp'] = {'data': timestamp, 'valid': True}
+        for group in groups:
+            reformatted_frame[group['label']] = {'data': group['data'], 'valid': checksum(group)}
+        reduced_frame = dict()
+        all_valid = True
+        for label in ['timestamp', 'BASE', 'PAPP']:
+            reduced_frame[label] = int(reformatted_frame[label]['data'])
+            all_valid = all_valid and reformatted_frame[label]['valid']
+        line = "{}, {}, {}\n".format(reduced_frame['timestamp'], reduced_frame['BASE'], reduced_frame['PAPP'])
+        if all_valid:
+            return line
+
+    @staticmethod
+    def write_line(file, line):
+        """Write a line to a file."""
+        file.write(line)
+        file.flush()
