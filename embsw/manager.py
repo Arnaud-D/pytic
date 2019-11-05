@@ -1,6 +1,5 @@
 import uasyncio as asyncio
 import utoken
-import logger as log
 
 # States
 PAUSED = 0
@@ -36,7 +35,7 @@ class Manager:
 
     def transition_to_stopped(self):
         self.logger.deactivate()
-        if self.logger.status() == log.LOGGER_INACTIVE:
+        if not self.logger.active:
             self.acknowledge_long_press()
             if not utoken.exists():
                 utoken.create()
@@ -44,14 +43,14 @@ class Manager:
 
     def transition_to_paused(self):
         self.logger.deactivate()
-        if self.logger.status() == log.LOGGER_INACTIVE:
-            self.state = PAUSED
+        if not self.logger.active:
             self.acknowledge_short_press()
+            self.state = PAUSED
 
     def transition_to_started(self):
         self.logger.activate()
-        if self.logger.status() == log.LOGGER_ACTIVE:
-            self.short_press_notified = False
+        if self.logger.active:
+            self.acknowledge_short_press()
             self.state = STARTED
 
     async def update_state(self):

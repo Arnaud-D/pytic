@@ -5,7 +5,7 @@ import uasyncio as asyncio
 SWITCH_PRESSED = True
 SWITCH_RELEASED = False
 
-BUTTON_DEBOUNCE = 50  # Switch debounce duration (ms)
+BUTTON_DEBOUNCE = 20  # Switch debounce duration (ms)
 BUTTON_LONGPRESS = 1000  # Long press duration (ms)
 
 
