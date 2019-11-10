@@ -73,6 +73,3 @@ class Manager:
             else:
                 print("Error.")
             await asyncio.sleep_ms(self._wait_time)
-
-    def schedule(self, loop):
-        loop.create_task(self.update_state())

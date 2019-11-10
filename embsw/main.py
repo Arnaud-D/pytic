@@ -12,6 +12,7 @@ SLEEP_TIME_INACTIVE = 50  # (ms)
 SLEEP_TIME_ACTIVE = 10  # (ms)
 
 # Configuration
+LOGTYPE = "csv"
 CFG = "historic"
 OUTPUT_FILE = "data.json"
 UART_CHANNEL = 3
@@ -25,8 +26,7 @@ def main():
 
 
 def logger_mode():
-    logger = log.Logger(asyncio.get_event_loop(),
-                        "reduced",
+    logger = log.Logger(LOGTYPE,
                         CFG,
                         UART_CHANNEL,
                         OUTPUT_FILE,
@@ -40,7 +40,8 @@ def logger_mode():
                           fb.feedback_started,
                           fb.feedback_stopped)
     loop = asyncio.get_event_loop()
-    manager.schedule(loop)
+    loop.create_task(logger.log())
+    loop.create_task(manager.update_state())
     loop.create_task(input.detect_button_press(manager))
     button = aswitch.Pushbutton(machine.Pin.board.SW)
     button.long_func(lambda: input.callback_long_press(manager))

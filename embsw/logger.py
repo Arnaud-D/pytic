@@ -3,171 +3,125 @@ import uasyncio as asyncio
 import ujson
 import ure
 
-# Special symbols
-SYM_STX = 0x02
-SYM_ETX = 0x03
-SYM_EOT = 0x04
-SYM_LF = 0x0A
-SYM_CR = 0x0D
-SYM_SP = 0x20
 
-# Sets of parameters for series communication
-CFG_HISTORIC = {'baudrate': 1200,
-                'bits': 7,
-                'parity': 0,
-                'stop': 1}
-CFG_STANDARD = {'baudrate': 9600,
-                'bits': 7,
-                'parity': 0,
-                'stop': 1}
+class Reader:
+    def __init__(self, channel, baudrate, bits, parity, stop):
+        self.baudrate = baudrate
+        self.bits = bits
+        self.parity = parity
+        self.stop = stop
+        self.uart = pyb.UART(channel, baudrate)
+        self.stream_reader = asyncio.StreamReader(self.uart)
+        self.read = self.stream_reader.read
 
-# States of the stream parser
-SP_WAITING = 0
-SP_RECEIVING = 1
+    def init(self):
+        self.uart.init(self.baudrate, bits=self.bits, parity=self.parity, stop=self.stop)
 
-# Status of received frames
-FRAME_COMPLETE = 0
-FRAME_TRUNCATED = 1
-
-# States of the frame parser
-FP_WAITING = 0
-FP_READING = 1
+    def deinit(self):
+        self.uart.deinit()
 
 
-# Processing pipeline:
-# TIC -->[produce_chars]--> chars -->[produce_frames]--> frames -->[process_frame]--> processed_frames
-# -->[lineify]--> lines --> [write_lines]--> file
+class HistoricReader(Reader):
+    def __init__(self, channel):
+        super().__init__(channel=channel, baudrate=1200, bits=7, parity=0, stop=1)
 
 
-def checksum(group):
-    """Compute the checksum for a data group."""
-    return group['checksum'] == chr((sum([ord(c) for c in group['checkfield']]) & 0x3F) + 0x20)
+class StandardReader(Reader):
+    def __init__(self, channel):
+        super().__init__(channel=channel, baudrate=9600, bits=7, parity=0, stop=1)
 
 
-class Logger:
-    def __init__(self, loop, logtype, cfg, channel, filename, active_wait_time, inactive_wait_time, on_reception):
-        self.loop = loop
-        loop.create_task(self.read_chars())
-        if logtype == "full":
-            self.make_line = self.make_line_full
-        elif logtype == "reduced":
-            self.make_line = self.make_line_reduced
-        else:
-            raise ValueError("'{}' is not a correct value for argument cfg.".format(cfg))
+class Parser:
+    # Special symbols
+    SYM_STX = 0x02
+    SYM_ETX = 0x03
+    SYM_EOT = 0x04
+    SYM_LF = 0x0A
+    SYM_CR = 0x0D
+    SYM_SP = 0x20
 
-        self.channel = channel
-        if cfg == "historic":
-            self.cfg = CFG_HISTORIC
-            self.regex_payload = ure.compile("([^ ]+) (.+) .")
-            self.regex_check = ure.compile("(.+) (.)")
-        elif cfg == "standard":
-            self.cfg = CFG_STANDARD
-            self.regex_payload = ure.compile("([^ ]+) (.+) .")  # TODO: adapt for standard mode
-            self.regex_check = ure.compile("(.+) (.)")  # TODO: adapt for standard mode
-        else:
-            raise ValueError("'{}' is not a correct value for argument cfg.".format(cfg))
+    # States of the stream parser
+    SP_WAITING = 0
+    SP_RECEIVING = 1
 
-        self.filename = filename
-        self.tic = pyb.UART(self.channel, self.cfg['baudrate'])
-        self.file = None
-        self.gen = None
+    def __init__(self, regex_payload, regex_check):
+        self.generator = None
+        self.regex_payload = ure.compile(regex_payload)
+        self.regex_check = ure.compile(regex_check)
 
-        # Logger activation status
-        self.active = False
+    def init(self):
+        self.generator = self.frame_generator()
+        next(self.generator)
 
-        # Wait times
-        self.active_wait_time = active_wait_time
-        self.inactive_wait_time = inactive_wait_time
+    def deinit(self):
+        self.generator = None
 
-        # Callback on frame reception
-        self.on_reception = on_reception
-
-    def activate(self):
-        """Activate the logger."""
-        self.active = True
-        self.tic.init(self.cfg['baudrate'],
-                      bits=self.cfg['bits'],
-                      parity=self.cfg['parity'],
-                      stop=self.cfg['stop'])
-        self.file = open(self.filename, "a")
-        self.gen = self.generate_frames()
-        next(self.gen)
-
-    def deactivate(self):
-        """Deactivate the logger."""
-        self.active = False
-        self.tic.deinit()
-        self.file.close()
-
-    async def read_chars(self):
-        """Read chars from the TIC interface."""
-        start = pyb.millis()
-        while True:
-            if self.active:
-                data = self.tic.read()
-                if data is not None:
-                    for byte in data:
-                        frame, frame_status = self.gen.send(byte)
-                        if frame is not None:
-                            timestamp = pyb.elapsed_millis(start)
-                            self.write_frame(self.file, frame, frame_status, timestamp)
-                            self.on_reception()
-                        await asyncio.sleep_ms(0)
-                else:
-                    await asyncio.sleep_ms(self.active_wait_time)
-            else:
-                await asyncio.sleep_ms(self.inactive_wait_time)
+    def parse(self, data_bytes):
+        for byte in data_bytes:
+            frame_data, is_frame_complete = self.generator.send(byte)
+            if frame_data is not None and is_frame_complete:
+                return self.extract_groups(frame_data), is_frame_complete
+        return None, None
 
     @staticmethod
-    def generate_frames():
+    def frame_generator():
         """Generate frames (list of bytes) from received bytes."""
-        state = SP_WAITING
-        frame, status = None, None
+        state = Parser.SP_WAITING
+        frame_data, is_frame_complete = None, None
         buffer = []
         while True:
-            c = yield frame, status
-            frame, status = None, None
-            if state == SP_WAITING:
-                if c == SYM_STX:
+            c = yield frame_data, is_frame_complete
+            frame_data, is_frame_complete = None, None
+            if state == Parser.SP_WAITING:
+                if c == Parser.SYM_STX:
                     buffer = []
-                    state = SP_RECEIVING
-            elif state == SP_RECEIVING:
-                if c == SYM_ETX or c == SYM_EOT:
-                    frame = buffer
-                    status = FRAME_COMPLETE if c == SYM_ETX else FRAME_TRUNCATED
-                    state = SP_WAITING
+                    state = Parser.SP_RECEIVING
+            elif state == Parser.SP_RECEIVING:
+                if c == Parser.SYM_ETX or c == Parser.SYM_EOT:
+                    frame_data, is_frame_complete = buffer, c == Parser.SYM_ETX
+                    state = Parser.SP_WAITING
                 else:
                     buffer.append(c)
 
-    def write_frame(self, file, frame, status, timestamp):
-        """Write a frame to a file."""
-        groups = self.extract_groups(frame, status)
-        if groups is not None:
-            line = self.make_line(groups, timestamp)
-            self.write_line(file, line)
-
-    def extract_groups(self, frame, status):
+    def extract_groups(self, frame):
         """Parse a frame to extract the groups."""
-        if status == FRAME_COMPLETE:  # Filter out truncated frames
-            groups = []
-            buffer = ""
-            for c in frame:
-                if c == SYM_LF:
-                    buffer = ""
-                elif c == SYM_CR:
-                    match_payload = self.regex_payload.match(buffer)
-                    match_check = self.regex_check.match(buffer)
-                    group = {'label': match_payload.group(1),
-                             'data': match_payload.group(2),
-                             'checkfield': match_check.group(1),
-                             'checksum': match_check.group(2)}
-                    groups.append(group)
-                else:
-                    buffer += chr(c)
-            return groups
+        groups = []
+        buffer = ""
+        for c in frame:
+            if c == Parser.SYM_LF:
+                buffer = ""
+            elif c == Parser.SYM_CR:
+                match_payload = self.regex_payload.match(buffer)
+                match_check = self.regex_check.match(buffer)
+                group = {'label': match_payload.group(1),
+                         'data': match_payload.group(2),
+                         'checkfield': match_check.group(1),
+                         'checksum': match_check.group(2)}
+                groups.append(group)
+            else:
+                buffer += chr(c)
+        return groups
 
+
+class HistoricParser(Parser):
+    def __init__(self):
+        super().__init__(regex_payload="([^ ]+) (.+) .", regex_check="(.+) (.)")
+
+
+class StandardParser(Parser):
+    def __init__(self):
+        super().__init__(regex_payload="([^ ]+) (.+) .", regex_check="(.+) (.)")  # TODO: adapt for standard mode
+
+
+class Formatter:
     @staticmethod
-    def make_line_full(groups, timestamp):
+    def format(groups, is_frame_complete, timestamp):
+        raise NotImplementedError
+
+
+class JsonFormatter(Formatter):
+    @staticmethod
+    def format(groups, is_frame_complete, timestamp):
         """Produce a line from a processed frame with timestamp (full information)."""
         reformatted_frame = dict()
         reformatted_frame['timestamp'] = {'data': timestamp, 'valid': True}
@@ -176,8 +130,10 @@ class Logger:
         line = ujson.dumps(reformatted_frame) + "\n"
         return line
 
+
+class CsvFormatter(Formatter):
     @staticmethod
-    def make_line_reduced(groups, timestamp):
+    def format(groups, is_frame_complete, timestamp):
         """Make a line from a processed frame with timestamp (reduced information)."""
         reformatted_frame = dict()
         reformatted_frame['timestamp'] = {'data': timestamp, 'valid': True}
@@ -192,8 +148,85 @@ class Logger:
         if all_valid:
             return line
 
-    @staticmethod
-    def write_line(file, line):
-        """Write a line to a file."""
-        file.write(line)
-        file.flush()
+
+class Writer:
+    def __init__(self, filename):
+        self.filename = filename
+        self.file = None
+
+    def init(self):
+        """Initialize the writer."""
+        self.file = open(self.filename, "a")
+
+    def deinit(self):
+        """Deinitialize the writer."""
+        self.file.close()
+
+    def write(self, data):
+        """Write data to a file."""
+        self.file.write(data)
+        self.file.flush()
+
+
+def checksum(group):
+    """Compute the checksum for a data group."""
+    return group['checksum'] == chr((sum([ord(c) for c in group['checkfield']]) & 0x3F) + 0x20)
+
+
+class Logger:
+    def __init__(self, logtype, cfg, channel, filename, active_wait_time, inactive_wait_time, on_reception):
+        self.start = pyb.millis()
+        self.on_reception = on_reception
+        self.active = False
+        self.active_wait_time = active_wait_time
+        self.inactive_wait_time = inactive_wait_time
+
+        # Select reader and parser type
+        if cfg == "historic":
+            self.reader = HistoricReader(channel)
+            self.parser = HistoricParser()
+        elif cfg == "standard":
+            self.reader = StandardReader(channel)
+            self.parser = StandardParser()
+        else:
+            raise ValueError("'{}' is not a correct value for argument cfg.".format(cfg))
+
+        # Select formatter type
+        if logtype == "json":
+            self.formatter = JsonFormatter()
+        elif logtype == "csv":
+            self.formatter = CsvFormatter()
+        else:
+            raise ValueError("'{}' is not a correct value for argument logtype.".format(cfg))
+
+        # Select writer type
+        self.writer = Writer(filename)
+
+    def activate(self):
+        """Activate the logger."""
+        self.active = True
+        self.reader.init()
+        self.parser.init()
+        self.writer.init()
+
+    def deactivate(self):
+        """Deactivate the logger."""
+        self.active = False
+        self.reader.deinit()
+        self.parser.deinit()
+        self.writer.deinit()
+
+    async def log(self):
+        """Log the TIC interface."""
+        while True:
+            if self.active:
+                data = await self.reader.read()
+                frame_data, is_frame_complete = self.parser.parse(data)
+                if frame_data is not None:  # Frame received
+                    self.on_reception()
+                    timestamp = pyb.elapsed_millis(self.start)
+                    formatted_data = self.formatter.format(frame_data, is_frame_complete, timestamp)
+                    self.writer.write(formatted_data)
+                await asyncio.sleep_ms(self.active_wait_time)
+            else:
+                await asyncio.sleep_ms(self.inactive_wait_time)
