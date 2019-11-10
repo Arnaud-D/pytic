@@ -144,8 +144,6 @@ class Pushbutton(object):
         self._dd = False  # Ditto for doubleclick
         self.sense = pin.value()  # Convert from electrical to logical value
         self.state = self.rawstate()  # Initial state
-        loop = asyncio.get_event_loop()
-        loop.create_task(self.buttoncheck())  # Thread runs forever
 
     def press_func(self, func, args=()):
         self._tf = func

@@ -119,7 +119,7 @@ class Formatter:
         raise NotImplementedError
 
 
-class JsonFormatter(Formatter):
+class JsonHistoricFormatter(Formatter):
     @staticmethod
     def format(groups, is_frame_complete, timestamp):
         """Produce a line from a processed frame with timestamp (full information)."""
@@ -131,7 +131,7 @@ class JsonFormatter(Formatter):
         return line
 
 
-class CsvFormatter(Formatter):
+class CsvHistoricFormatter(Formatter):
     @staticmethod
     def format(groups, is_frame_complete, timestamp):
         """Make a line from a processed frame with timestamp (reduced information)."""
@@ -147,6 +147,18 @@ class CsvFormatter(Formatter):
         line = "{}, {}, {}\n".format(reduced_frame['timestamp'], reduced_frame['BASE'], reduced_frame['PAPP'])
         if all_valid:
             return line
+
+
+class JsonStandardFormatter(Formatter):
+    @staticmethod
+    def format(groups, is_frame_complete, timestamp):
+        raise NotImplementedError
+
+
+class CsvStandardFormatter(Formatter):
+    @staticmethod
+    def format(groups, is_frame_complete, timestamp):
+        raise NotImplementedError
 
 
 class Writer:
@@ -181,25 +193,25 @@ class Logger:
         self.active_wait_time = active_wait_time
         self.inactive_wait_time = inactive_wait_time
 
-        # Select reader and parser type
-        if cfg == "historic":
+        if cfg == "historic" and logtype == "json":
             self.reader = HistoricReader(channel)
             self.parser = HistoricParser()
-        elif cfg == "standard":
+            self.formatter = JsonHistoricFormatter()
+        elif cfg == "historic" and logtype == "csv":
+            self.reader = HistoricReader(channel)
+            self.parser = HistoricParser()
+            self.formatter = CsvHistoricFormatter()
+        elif cfg == "standard" and logtype == "json":
             self.reader = StandardReader(channel)
             self.parser = StandardParser()
+            self.formatter = JsonStandardFormatter()
+        elif cfg == "standard" and logtype == "csv":
+            self.reader = StandardReader(channel)
+            self.parser = StandardParser()
+            self.formatter = CsvStandardFormatter()
         else:
-            raise ValueError("'{}' is not a correct value for argument cfg.".format(cfg))
+            raise ValueError("'{}' and '{}' are not correct config and logtype values.".format(cfg, logtype))
 
-        # Select formatter type
-        if logtype == "json":
-            self.formatter = JsonFormatter()
-        elif logtype == "csv":
-            self.formatter = CsvFormatter()
-        else:
-            raise ValueError("'{}' is not a correct value for argument logtype.".format(cfg))
-
-        # Select writer type
         self.writer = Writer(filename)
 
     def activate(self):

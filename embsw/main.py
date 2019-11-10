@@ -2,9 +2,9 @@ import pyb
 import machine
 import uasyncio as asyncio
 import lib.aswitch as aswitch
-import logger as log
-import manager as mgr
-import feedback as fb
+import logger
+import manager
+import notifications
 import input
 
 # Sleep time for inactivity
@@ -12,39 +12,41 @@ SLEEP_TIME_INACTIVE = 50  # (ms)
 SLEEP_TIME_ACTIVE = 10  # (ms)
 
 # Configuration
-LOGTYPE = "csv"
+LOGTYPE = "json"
 CFG = "historic"
-OUTPUT_FILE = "data.json"
+OUTPUT_FILE = "data.txt"
 UART_CHANNEL = 3
 
 
 def main():
     if pyb.usb_mode() == "MSC":  # Board started in "data transfer mode"
-        fb.feedback_transfer_mode()
+        notifications.device_transferring()
     else:  # Board started in "logger mode"
         logger_mode()
 
 
 def logger_mode():
-    logger = log.Logger(LOGTYPE,
+    log = logger.Logger(LOGTYPE,
                         CFG,
                         UART_CHANNEL,
                         OUTPUT_FILE,
                         SLEEP_TIME_ACTIVE,
                         SLEEP_TIME_INACTIVE,
-                        fb.feedback_reception)
-    manager = mgr.Manager(logger,
+                        notifications.frame_received)
+    mgr = manager.Manager(log,
                           SLEEP_TIME_ACTIVE,
-                          fb.feedback_logger_mode,
-                          fb.feedback_paused,
-                          fb.feedback_started,
-                          fb.feedback_stopped)
-    loop = asyncio.get_event_loop()
-    loop.create_task(logger.log())
-    loop.create_task(manager.update_state())
-    loop.create_task(input.detect_button_press(manager))
+                          notifications.device_logging,
+                          notifications.logger_paused,
+                          notifications.logger_started,
+                          notifications.device_stopped)
     button = aswitch.Pushbutton(machine.Pin.board.SW)
-    button.long_func(lambda: input.callback_long_press(manager))
+    button.long_func(lambda: input.callback_long_press(mgr))
+
+    loop = asyncio.get_event_loop()
+    loop.create_task(log.log())
+    loop.create_task(mgr.execute())
+    loop.create_task(input.detect_button_press(mgr))
+    loop.create_task(button.buttoncheck())
     loop.run_forever()
 
 

@@ -1,75 +1,87 @@
 import uasyncio as asyncio
 import utoken
 
-# States
-PAUSED = 0
-STARTED = 1
-STOPPED = 2
+
+class State:
+    PAUSED = 0
+    STARTED = 1
+    STOPPED = 2
+
+
+class Event:
+    EVENT1 = 0
+    EVENT2 = 1
 
 
 class Manager:
-    """Manage the state of the device (started/paused/stopped)."""
-
-    def __init__(self, logger, wait_time, action_always, action_paused, action_started, action_stopped):
+    """Manage the state of the device."""
+    def __init__(self, logger, wait_time, on_init, on_pause, on_start, on_stop):
         self.logger = logger
-        self._wait_time = wait_time
-        self.action_when_paused = action_paused
-        self.action_when_started = action_started
-        self.action_when_stopped = action_stopped
-        self.action_always = action_always
-        self.short_press_notified = False
-        self.long_press_notified = False
-        self.state = PAUSED
+        self.wait_time = wait_time
+        self.on_pause = on_pause
+        self.on_start = on_start
+        self.on_stop = on_stop
+        self.on_init = on_init
+        self.event1_notified = False
+        self.event2_notified = False
+        self.state = State.PAUSED
 
-    def notify_short_press(self):
-        self.short_press_notified = True
+    def notify(self, event):
+        if event == Event.EVENT1:
+            self.event1_notified = True
+        elif event == Event.EVENT2:
+            self.event2_notified = True
+        else:
+            raise ValueError
 
-    def acknowledge_short_press(self):
-        self.short_press_notified = False
+    def acknowledge(self, event):
+        if event == Event.EVENT1:
+            self.event1_notified = False
+        elif event == Event.EVENT2:
+            self.event2_notified = False
+        else:
+            raise ValueError
 
-    def notify_long_press(self):
-        self.long_press_notified = True
+    def transition(self, dest_state):
+        # Transition to STOPPED
+        if (self.state == State.PAUSED or self.state == State.STARTED) and dest_state == State.STOPPED:
+            self.logger.deactivate()
+            if not self.logger.active:
+                self.acknowledge(Event.EVENT2)
+                if not utoken.exists():
+                    utoken.create()
+                self.on_stop()
+                self.state = State.STOPPED
+        # Transition to PAUSED
+        elif self.state == State.STARTED and dest_state == State.PAUSED:
+            self.logger.deactivate()
+            if not self.logger.active:
+                self.acknowledge(Event.EVENT1)
+                self.on_pause()
+                self.state = State.PAUSED
+        # Transition to STARTED
+        elif self.state == State.PAUSED and dest_state == State.STARTED:
+            self.logger.activate()
+            if self.logger.active:
+                self.acknowledge(Event.EVENT1)
+                self.on_start()
+                self.state = State.STARTED
 
-    def acknowledge_long_press(self):
-        self.long_press_notified = False
-
-    def transition_to_stopped(self):
-        self.logger.deactivate()
-        if not self.logger.active:
-            self.acknowledge_long_press()
-            if not utoken.exists():
-                utoken.create()
-            self.state = STOPPED
-
-    def transition_to_paused(self):
-        self.logger.deactivate()
-        if not self.logger.active:
-            self.acknowledge_short_press()
-            self.state = PAUSED
-
-    def transition_to_started(self):
-        self.logger.activate()
-        if self.logger.active:
-            self.acknowledge_short_press()
-            self.state = STARTED
-
-    async def update_state(self):
+    async def execute(self):
+        self.on_init()
         while True:
-            self.action_always()
-            if self.state == PAUSED:
-                self.action_when_paused()
-                if self.long_press_notified:
-                    self.transition_to_stopped()
-                elif self.short_press_notified:
-                    self.transition_to_started()
-            elif self.state == STARTED:
-                self.action_when_started()
-                if self.long_press_notified:
-                    self.transition_to_stopped()
-                elif self.short_press_notified:
-                    self.transition_to_paused()
-            elif self.state == STOPPED:
-                self.action_when_stopped()
+            if self.state == State.PAUSED:
+                if self.event2_notified:
+                    self.transition(State.STOPPED)
+                elif self.event1_notified:
+                    self.transition(State.STARTED)
+            elif self.state == State.STARTED:
+                if self.event2_notified:
+                    self.transition(State.STOPPED)
+                elif self.event1_notified:
+                    self.transition(State.PAUSED)
+            elif self.state == State.STOPPED:
+                pass
             else:
-                print("Error.")
-            await asyncio.sleep_ms(self._wait_time)
+                raise ValueError
+            await asyncio.sleep_ms(self.wait_time)
