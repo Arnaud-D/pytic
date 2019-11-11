@@ -31,7 +31,9 @@ def update_figure(anl, canvas):
     time = anl.time
     time_offset = [t/1000 - time[0]/1000 for t in time]
     # Plot
-    figure = plt.Figure(figsize=(5, 4), dpi=100)
+    width, height = canvas.get_width_height()
+    dpi = 100
+    figure = plt.Figure(figsize=(width/dpi, height/dpi), dpi=dpi)
     figure.add_subplot(111).plot(time_offset, power)
     validity_markers_invalid = [power[i] for i in range(len(validity)) if not validity[i]]
     time_markers_invalid = [time_offset[i] for i in range(len(validity)) if not validity[i]]
