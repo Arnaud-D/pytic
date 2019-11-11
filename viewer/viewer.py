@@ -1,36 +1,19 @@
 import matplotlib
 import matplotlib.pyplot as plt
-import json
 import tkinter as tk
 from tkinter import ttk
 import tkinter.filedialog as fd
+import tkinter.messagebox as mb
 from matplotlib.backends.backend_tkagg import (
     FigureCanvasTkAgg, NavigationToolbar2Tk)
+
+import analyzer
 
 matplotlib.use("TkAgg")
 
 WINDOW_TITLE = "Visionneuse Linkycom"
 WINDOW_PADX = 0
 WINDOW_PADY = 0
-
-
-def load_data(filename):
-    """Load data from a file."""
-    frames = []
-    with open(filename) as f:
-        for line in f.readlines():
-            frames.append(json.loads(line))
-    return frames
-
-
-def extract_data(label, frames):
-    """Extract the data corresponding to a label from a dataset."""
-    data = []
-    validity = []
-    for frame in frames:
-        data.append(frame[label]['data'])
-        validity.append(frame[label]['valid'])
-    return data, validity
 
 
 def get_path(data_file_entry):
@@ -41,14 +24,13 @@ def get_path(data_file_entry):
         data_file_entry.insert(0, file)
 
 
-def import_file(data_file_entry, canvas, figure):
-    """Action when clicking on the import button."""
-    filename = data_file_entry.get()
-    data = load_data(filename)
-    power_str, validity = extract_data('PAPP', data)
-    time, _ = extract_data('timestamp', data)
+def update_figure(anl, canvas):
+    # Get data
+    validity = anl.validity
+    power = anl.power
+    time = anl.time
     time_offset = [t/1000 - time[0]/1000 for t in time]
-    power = list(map(int, power_str))
+    # Plot
     figure = plt.Figure(figsize=(5, 4), dpi=100)
     figure.add_subplot(111).plot(time_offset, power)
     validity_markers_invalid = [power[i] for i in range(len(validity)) if not validity[i]]
@@ -68,44 +50,96 @@ def main():
     root.config(padx=WINDOW_PADX)
     root.config(pady=WINDOW_PADY)
 
-    # Notebook and tabs
-    notebook = ttk.Notebook(root)
-    notebook.pack(fill=tk.BOTH, expand=1)
-    config = ttk.Frame()
-    view = ttk.Frame()
-    notebook.add(config, text="Configuration")
-    notebook.add(view, text="Vue")
+    # Window
+    window = tk.PanedWindow(root, orient=tk.HORIZONTAL, sashrelief=tk.RAISED)
+    window.pack(expand=True, fill='both')
+    # Panes
+    config = ttk.Frame(window, width=300, height=500)
+    config.grid(column=0, row=0, sticky=tk.W+tk.E)
+    view = ttk.Frame(window, width=800, height=500)
+    view.grid(column=1, row=0, sticky=tk.W+tk.E)
+    window.add(config)
+    config.grid_columnconfigure(index=0, weight=1, minsize=100)
+    config.grid_columnconfigure(index=1, weight=0, minsize=50)
+    window.add(view)
 
     # Config tab
+    # - Data file
+    # -- Data file label
+    file_prompt = tk.Label(config, text="Fichier de données :")
+    file_prompt.grid(column=0, row=0, sticky=tk.W)
     # -- Data file entry
-    data_file_prompt = tk.Label(config, text="Fichier de données :")
-    data_file_prompt.grid(column=0, row=0, sticky=tk.W)
-    data_file_entry = tk.Entry(config, width=50)
-    data_file_entry.grid(column=1, row=0)
-    data_file_browse_button = tk.Button(config, text="...")
-    data_file_browse_button.grid(column=2, row=0)
-    # -- Import data button
-    import_button = tk.Button(config, text="Importer")
-    import_button.grid(column=3, row=0, columnspan=2, padx=(10, 0))
+    file_entry = tk.Entry(config, width=25)
+    file_entry.grid(column=0, row=1, sticky=tk.W+tk.E)
+    # -- Data file browse button
+    file_browse = tk.Button(config, text="...")
+    file_browse.grid(column=1, row=1)
+    # -- Data file import button
+    file_import = tk.Button(config, text="Importer")
+    file_import.grid(column=0, row=8, columnspan=2, sticky=tk.W+tk.E)
+    # - Mode selection
+    # -- Mode label
+    mode_label = tk.Label(config, text="Mode du compteur")
+    mode_label.grid(column=0, row=2, sticky=tk.W)
+    # -- Options
+    selected_mode = tk.StringVar(None, "historic")
+    historic_mode = tk.Radiobutton(config, text="Historique", variable=selected_mode, value="historic", padx=20)
+    historic_mode.grid(column=0, row=3, sticky=tk.W)
+    standard_mode = tk.Radiobutton(config, text="Standard", variable=selected_mode, value="standard", padx=20)
+    standard_mode.grid(column=0, row=4, sticky=tk.W)
+    # - Format selection
+    # -- Mode label
+    format_label = tk.Label(config, text="Format du fichier")
+    format_label.grid(column=0, row=5, sticky=tk.W)
+    selected_format = tk.StringVar(None, "csv")
+    csv_format = tk.Radiobutton(config, text="CSV", variable=selected_format, value="csv", padx=20)
+    csv_format.grid(column=0, row=6, sticky=tk.W)
+    json_format = tk.Radiobutton(config, text="JSON", variable=selected_format, value="json", padx=20)
+    json_format.grid(column=0, row=7, sticky=tk.W)
 
     # View tab
     figure = plt.Figure(figsize=(5, 4), dpi=100)
     canvas = FigureCanvasTkAgg(figure, master=view)
     canvas.draw()
     canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
-    toolbar = NavigationToolbar2Tk(canvas, root)
+    toolbar = NavigationToolbar2Tk(canvas, view)
     toolbar.update()
     canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
 
     # Actions
     def data_file_browse_button_action():
-        return get_path(data_file_entry)
+        return get_path(file_entry)
 
     def import_button_action():
-        return import_file(data_file_entry, canvas, figure)
+        mode = selected_mode.get()
+        fmt = selected_format.get()
+        filename = file_entry.get()
+        if mode == "historic" and fmt == "json":
+            anl = analyzer.JsonHistoricAnalyzer(filename)
+        elif mode == "historic" and fmt == "csv":
+            anl = analyzer.CsvHistoricAnalyzer(filename)
+        elif mode == "standard" and fmt == "json":
+            anl = analyzer.JsonStandardAnalyzer(filename)
+        elif mode == "standard" and fmt == "csv":
+            anl = analyzer.CsvStandardAnalyzer(filename)
+        else:
+            raise ValueError
 
-    data_file_browse_button["command"] = data_file_browse_button_action
-    import_button["command"] = import_button_action
+        try:
+            anl.analyze()
+        except FileNotFoundError:
+            mb.showerror("Erreur", "Erreur ! Le fichier '{}' n'existe pas.".format(filename))
+            return
+        except ValueError:
+            mb.showerror("Erreur", "Erreur ! L'analyse du fichier a échoué.")
+            return
+        except NotImplementedError:
+            mb.showinfo("Information", "La fonctionnalité n'est pas encore disponible.".format(filename))
+            return
+        update_figure(anl, canvas)
+
+    file_browse["command"] = data_file_browse_button_action
+    file_import["command"] = import_button_action
 
     root.mainloop()
 
