@@ -22,12 +22,17 @@ class Interface:
 
         self.config_pane = ttk.Frame(self.window, width=300, height=500)
         self.config_pane.grid(column=0, row=0, sticky=tk.W + tk.E)
-        self.view_pane = ttk.Frame(self.window, width=800, height=500)
-        self.view_pane.grid(column=1, row=0, sticky=tk.W + tk.E)
-        self.window.add(self.config_pane)
         self.config_pane.grid_columnconfigure(index=0, weight=1, minsize=100)
         self.config_pane.grid_columnconfigure(index=1, weight=0, minsize=50)
-        self.window.add(self.view_pane)
+        self.window.add(self.config_pane)
+
+        self.notebook = ttk.Notebook(self.window)
+        self.notebook.grid(column=1, row=0, sticky=tk.W + tk.E)
+        self.view_pane_power = ttk.Frame(self.notebook, width=800, height=500)
+        self.notebook.add(self.view_pane_power, text="Puissance")
+        self.view_pane_index = ttk.Frame(self.notebook, width=800, height=500)
+        self.notebook.add(self.view_pane_index, text="Index")
+        self.window.add(self.notebook)
 
         self.file_prompt = tk.Label(self.config_pane, text="Fichier de données :")
         self.file_prompt.grid(column=0, row=0, sticky=tk.W)
@@ -61,13 +66,21 @@ class Interface:
         self.json_format.grid(column=0, row=7, sticky=tk.W)
 
         # View tab
-        self.figure = plt.Figure(figsize=(5, 4), dpi=100)
-        self.canvas = FigureCanvasTkAgg(self.figure, master=self.view_pane)
-        self.canvas.draw()
-        self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
-        self.toolbar = NavigationToolbar2Tk(self.canvas, self.view_pane)
-        self.toolbar.update()
-        self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
+        self.figure_power = plt.Figure(figsize=(5, 4), dpi=100)
+        self.canvas_power = FigureCanvasTkAgg(self.figure_power, master=self.view_pane_power)
+        self.canvas_power.draw()
+        self.canvas_power.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
+        self.power_toolbar = NavigationToolbar2Tk(self.canvas_power, self.view_pane_power)
+        self.power_toolbar.update()
+        self.canvas_power.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
+
+        self.figure_index = plt.Figure(figsize=(5, 4), dpi=100)
+        self.canvas_index = FigureCanvasTkAgg(self.figure_index, master=self.view_pane_index)
+        self.canvas_index.draw()
+        self.canvas_index.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
+        self.index_toolbar = NavigationToolbar2Tk(self.canvas_index, self.view_pane_index)
+        self.index_toolbar.update()
+        self.canvas_index.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
 
         self.file_browse["command"] = (lambda: self.get_path(self.file_entry))
         self.file_import["command"] = self.import_button_action
@@ -98,7 +111,8 @@ class Interface:
         except NotImplementedError:
             mb.showinfo("Information", "La fonctionnalité n'est pas encore disponible.".format(filename))
             return
-        self.update_figure(anl, self.canvas)
+        self.update_power_figure(anl, self.canvas_power)
+        self.update_index_figure(anl, self.canvas_index)
 
     def get_path(self, data_file_entry):
         """Action when clicking on the browse button."""
@@ -107,9 +121,9 @@ class Interface:
             data_file_entry.delete(0, last=tk.END)
             data_file_entry.insert(0, file)
 
-    def update_figure(self, anl, canvas):
+    def update_power_figure(self, anl, canvas):
         # Get data
-        validity = anl.validity
+        validity = anl.power_validity
         power = anl.power
         time = anl.time
         time_offset = [t/1000 - time[0]/1000 for t in time]
@@ -117,10 +131,35 @@ class Interface:
         width, height = canvas.get_width_height()
         dpi = 100
         figure = plt.Figure(figsize=(width/dpi, height/dpi), dpi=dpi)
-        figure.add_subplot(111).plot(time_offset, power)
+        ax = figure.add_subplot(111)
+        ax.plot(time_offset, power)
+        ax.set_xlabel("Temps (s)")
+        ax.set_ylabel("Puissance apparente (VA)")
         validity_markers_invalid = [power[i] for i in range(len(validity)) if not validity[i]]
         time_markers_invalid = [time_offset[i] for i in range(len(validity)) if not validity[i]]
         figure.gca().plot(time_markers_invalid, validity_markers_invalid, 'r. ')
+
+        canvas.figure = figure
+        canvas.draw()
+
+    def update_index_figure(self, anl, canvas):
+        # Get data
+        validity = anl.index_validity
+        index = [idx / 1000 for idx in anl.index]
+        time = anl.time
+        time_offset = [t/1000 - time[0]/1000 for t in time]
+        # Plot
+        width, height = canvas.get_width_height()
+        dpi = 100
+        figure = plt.Figure(figsize=(width/dpi, height/dpi), dpi=dpi)
+        ax = figure.add_subplot(111)
+        ax.plot(time_offset, index)
+        ax.set_xlabel("Temps (s)")
+        ax.set_ylabel("Index (kWh)")
+        validity_markers_invalid = [index[i] for i in range(len(validity)) if not validity[i]]
+        time_markers_invalid = [time_offset[i] for i in range(len(validity)) if not validity[i]]
+        figure.gca().plot(time_markers_invalid, validity_markers_invalid, 'r. ')
+
 
         canvas.figure = figure
         canvas.draw()

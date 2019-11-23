@@ -10,15 +10,19 @@ class JsonHistoricAnalyzer(Analyzer):
     def __init__(self, filename):
         self.filename = filename
         self.frames = []
-        self.validity = []
         self.time = []
         self.power = []
+        self.power_validity = []
+        self.index = []
+        self.index_validity = []
 
     def analyze(self):
         self.load()
-        power_str, self.validity = self.select('PAPP')
+        power_str, self.power_validity = self.select('PAPP')
         self.time, _ = self.select('timestamp')
         self.power = list(map(int, power_str))
+        index_str, self.index_validity = self.select('BASE')
+        self.index = list(map(int, index_str))
 
     def load(self):
         """Load data."""
@@ -41,9 +45,11 @@ class CsvHistoricAnalyzer(Analyzer):
     def __init__(self, filename):
         self.filename = filename
         self.frames = []
-        self.validity = []
         self.time = []
         self.power = []
+        self.power_validity = []
+        self.index = []
+        self.index_validity = []
 
     def analyze(self):
         try:
@@ -51,9 +57,11 @@ class CsvHistoricAnalyzer(Analyzer):
         except FileNotFoundError as e:
             raise e
         try:
-            power_str, self.validity = self.select('PAPP')
             self.time, _ = self.select('timestamp')
+            power_str, self.power_validity = self.select('PAPP')
             self.power = list(map(int, power_str))
+            index_str, self.index_validity = self.select('BASE')
+            self.index = list(map(int, index_str))
         except Exception:
             raise ValueError
 
