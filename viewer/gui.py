@@ -29,9 +29,11 @@ class Interface:
         self.notebook = ttk.Notebook(self.window)
         self.notebook.grid(column=1, row=0, sticky=tk.W + tk.E)
         self.view_pane_power = ttk.Frame(self.notebook, width=800, height=500)
-        self.notebook.add(self.view_pane_power, text="Puissance")
+        self.notebook.add(self.view_pane_power, text="Puissance apparente")
         self.view_pane_index = ttk.Frame(self.notebook, width=800, height=500)
         self.notebook.add(self.view_pane_index, text="Index")
+        self.view_pane_avgpower = ttk.Frame(self.notebook, width=800, height=500)
+        self.notebook.add(self.view_pane_avgpower, text="Puissance moyenne")
         self.window.add(self.notebook)
 
         self.file_prompt = tk.Label(self.config_pane, text="Fichier de données :")
@@ -82,6 +84,14 @@ class Interface:
         self.index_toolbar.update()
         self.canvas_index.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
 
+        self.figure_avgpower = plt.Figure(figsize=(5, 4), dpi=100)
+        self.canvas_avgpower = FigureCanvasTkAgg(self.figure_avgpower, master=self.view_pane_avgpower)
+        self.canvas_avgpower.draw()
+        self.canvas_avgpower.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
+        self.avgpower_toolbar = NavigationToolbar2Tk(self.canvas_avgpower, self.view_pane_avgpower)
+        self.avgpower_toolbar.update()
+        self.canvas_avgpower.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
+
         self.file_browse["command"] = (lambda: self.get_path(self.file_entry))
         self.file_import["command"] = self.import_button_action
 
@@ -113,6 +123,7 @@ class Interface:
             return
         self.update_power_figure(anl, self.canvas_power)
         self.update_index_figure(anl, self.canvas_index)
+        self.update_avgpower_figure(anl, self.canvas_avgpower)
 
     def get_path(self, data_file_entry):
         """Action when clicking on the browse button."""
@@ -160,6 +171,26 @@ class Interface:
         time_markers_invalid = [time_offset[i] for i in range(len(validity)) if not validity[i]]
         figure.gca().plot(time_markers_invalid, validity_markers_invalid, 'r. ')
 
+        canvas.figure = figure
+        canvas.draw()
+
+    def update_avgpower_figure(self, anl, canvas):
+        # Get data
+        validity = anl.avgpower_validity
+        avgpower = anl.avgpower
+        time = anl.time_avgpower
+        time_offset = [t/1000 - time[0]/1000 for t in time]
+        # Plot
+        width, height = canvas.get_width_height()
+        dpi = 100
+        figure = plt.Figure(figsize=(width/dpi, height/dpi), dpi=dpi)
+        ax = figure.add_subplot(111)
+        ax.plot(time_offset, avgpower)
+        ax.set_xlabel("Temps (s)")
+        ax.set_ylabel("Puissance moyenne (W)")
+        validity_markers_invalid = [avgpower[i] for i in range(len(validity)) if not validity[i]]
+        time_markers_invalid = [time_offset[i] for i in range(len(validity)) if not validity[i]]
+        figure.gca().plot(time_markers_invalid, validity_markers_invalid, 'r. ')
 
         canvas.figure = figure
         canvas.draw()
