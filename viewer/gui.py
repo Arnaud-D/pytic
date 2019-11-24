@@ -7,10 +7,19 @@ import tkinter.messagebox as mb
 from matplotlib.backends.backend_tkagg import (
     FigureCanvasTkAgg, NavigationToolbar2Tk)
 import analyzer
+import json
 matplotlib.use("TkAgg")
 
 
 class Interface:
+    @staticmethod
+    def get_path(data_file_entry):
+        """Action when clicking on the browse button."""
+        file = fd.askopenfilename()
+        if file != ():
+            data_file_entry.delete(0, last=tk.END)
+            data_file_entry.insert(0, file)
+
     def __init__(self, title):
         self.root = tk.Tk()
         self.root.title(title)
@@ -61,7 +70,7 @@ class Interface:
         # -- Mode label
         self.format_label = tk.Label(self.config_pane, text="Format du fichier")
         self.format_label.grid(column=0, row=5, sticky=tk.W)
-        self.selected_format = tk.StringVar(None, "csv")
+        self.selected_format = tk.StringVar(None, "json")
         self.csv_format = tk.Radiobutton(self.config_pane, text="CSV", variable=self.selected_format, value="csv", padx=20)
         self.csv_format.grid(column=0, row=6, sticky=tk.W)
         self.json_format = tk.Radiobutton(self.config_pane, text="JSON", variable=self.selected_format, value="json", padx=20)
@@ -95,105 +104,58 @@ class Interface:
         self.file_browse["command"] = (lambda: self.get_path(self.file_entry))
         self.file_import["command"] = self.import_button_action
 
+        self.anl = None
+
     def import_button_action(self):
         mode = self.selected_mode.get()
         fmt = self.selected_format.get()
         filename = self.file_entry.get()
         if mode == "historic" and fmt == "json":
-            anl = analyzer.JsonHistoricAnalyzer(filename)
+            self.anl = analyzer.JsonHistoricAnalyzer(filename)
         elif mode == "historic" and fmt == "csv":
-            anl = analyzer.CsvHistoricAnalyzer(filename)
+            self.anl = analyzer.CsvHistoricAnalyzer(filename)
         elif mode == "standard" and fmt == "json":
-            anl = analyzer.JsonStandardAnalyzer(filename)
+            self.anl = analyzer.JsonStandardAnalyzer(filename)
         elif mode == "standard" and fmt == "csv":
-            anl = analyzer.CsvStandardAnalyzer(filename)
+            self.anl = analyzer.CsvStandardAnalyzer(filename)
         else:
             raise ValueError
 
         try:
-            anl.analyze()
+            self.anl.analyze()
         except FileNotFoundError:
-            mb.showerror("Erreur", "Erreur ! Le fichier '{}' n'existe pas.".format(filename))
+            mb.showerror("Erreur", "L'import du fichier a échoué. Le fichier n'existe pas.")
+            return
+        except json.JSONDecodeError:
+            mb.showerror("Erreur", "L'import du fichier a échoué. Le fichier n'est pas un fichier JSON valide.")
             return
         except ValueError:
-            mb.showerror("Erreur", "Erreur ! L'analyse du fichier a échoué.")
+            mb.showerror("Erreur", "L'import du fichier a échoué. Le fichier est probablement corrompu.")
             return
         except NotImplementedError:
-            mb.showinfo("Information", "La fonctionnalité n'est pas encore disponible.".format(filename))
+            mb.showinfo("Information", "L'import du fichier a échoué. La fonctionnalité n'est pas encore disponible.")
             return
-        self.update_power_figure(anl, self.canvas_power)
-        self.update_index_figure(anl, self.canvas_index)
-        self.update_avgpower_figure(anl, self.canvas_avgpower)
+        self.update_power_figure()
+        self.update_index_figure()
+        self.update_avgpower_figure()
 
-    def get_path(self, data_file_entry):
-        """Action when clicking on the browse button."""
-        file = fd.askopenfilename()
-        if file != ():
-            data_file_entry.delete(0, last=tk.END)
-            data_file_entry.insert(0, file)
-
-    def update_power_figure(self, anl, canvas):
-        # Get data
-        validity = anl.power_validity
-        power = anl.power
-        time = anl.time
-        time_offset = [t/1000 - time[0]/1000 for t in time]
-        # Plot
-        width, height = canvas.get_width_height()
+    def update_power_figure(self):
+        width, height = self.canvas_power.get_width_height()
         dpi = 100
-        figure = plt.Figure(figsize=(width/dpi, height/dpi), dpi=dpi)
-        ax = figure.add_subplot(111)
-        ax.plot(time_offset, power)
-        ax.set_xlabel("Temps (s)")
-        ax.set_ylabel("Puissance apparente (VA)")
-        validity_markers_invalid = [power[i] for i in range(len(validity)) if not validity[i]]
-        time_markers_invalid = [time_offset[i] for i in range(len(validity)) if not validity[i]]
-        figure.gca().plot(time_markers_invalid, validity_markers_invalid, 'r. ')
+        self.canvas_power.figure = self.anl.get_figure_power(width, height, dpi)
+        self.canvas_power.draw()
 
-        canvas.figure = figure
-        canvas.draw()
-
-    def update_index_figure(self, anl, canvas):
-        # Get data
-        validity = anl.index_validity
-        index = [idx / 1000 for idx in anl.index]
-        time = anl.time
-        time_offset = [t/1000 - time[0]/1000 for t in time]
-        # Plot
-        width, height = canvas.get_width_height()
+    def update_index_figure(self):
+        width, height = self.canvas_index.get_width_height()
         dpi = 100
-        figure = plt.Figure(figsize=(width/dpi, height/dpi), dpi=dpi)
-        ax = figure.add_subplot(111)
-        ax.plot(time_offset, index)
-        ax.set_xlabel("Temps (s)")
-        ax.set_ylabel("Index (kWh)")
-        validity_markers_invalid = [index[i] for i in range(len(validity)) if not validity[i]]
-        time_markers_invalid = [time_offset[i] for i in range(len(validity)) if not validity[i]]
-        figure.gca().plot(time_markers_invalid, validity_markers_invalid, 'r. ')
+        self.canvas_index.figure = self.anl.get_figure_index(width, height, dpi)
+        self.canvas_index.draw()
 
-        canvas.figure = figure
-        canvas.draw()
-
-    def update_avgpower_figure(self, anl, canvas):
-        # Get data
-        validity = anl.avgpower_validity
-        avgpower = anl.avgpower
-        time = anl.time_avgpower
-        time_offset = [t/1000 - time[0]/1000 for t in time]
-        # Plot
-        width, height = canvas.get_width_height()
+    def update_avgpower_figure(self):
+        width, height = self.canvas_avgpower.get_width_height()
         dpi = 100
-        figure = plt.Figure(figsize=(width/dpi, height/dpi), dpi=dpi)
-        ax = figure.add_subplot(111)
-        ax.plot(time_offset, avgpower)
-        ax.set_xlabel("Temps (s)")
-        ax.set_ylabel("Puissance moyenne (W)")
-        validity_markers_invalid = [avgpower[i] for i in range(len(validity)) if not validity[i]]
-        time_markers_invalid = [time_offset[i] for i in range(len(validity)) if not validity[i]]
-        figure.gca().plot(time_markers_invalid, validity_markers_invalid, 'r. ')
-
-        canvas.figure = figure
-        canvas.draw()
+        self.canvas_avgpower.figure = self.anl.get_figure_avgpower(width, height, dpi)
+        self.canvas_avgpower.draw()
 
     def mainloop(self):
         self.root.mainloop()
