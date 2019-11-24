@@ -21,13 +21,9 @@ class Analyzer:
         self.datastore = None
 
     def analyze(self):
-        try:
-            time, _ = self.datastore.select('timestamp')
-            power_values, power_validity = self.datastore.select('PAPP')
-            index_values, index_validity = self.datastore.select('BASE')
-        except ValueError as e:
-            print("Corrupted file.")
-            raise e
+        time, _ = self.datastore.select('timestamp')
+        power_values, power_validity = self.datastore.select('PAPP')
+        index_values, index_validity = self.datastore.select('BASE')
 
         # Compute derived data
         time_avgpower, avgpower_values, avgpower_validity = self.compute_avgpower(index_values, time)
@@ -113,8 +109,17 @@ class JsonHistoricDataStore:
         papp = []
         validity = []
         for frame in self.frames:
-            papp.append(int(frame['PAPP']['data']))
-            validity.append(frame['PAPP']['valid'])
+            try:
+                if frame['PAPP']['valid']:
+                    papp.append(int(frame['PAPP']['data']))
+                else:
+                    papp.append(papp[-1])
+                validity.append(frame['PAPP']['valid'])
+            except (ValueError, KeyError):
+                if papp:
+                    papp.append(papp[-1])
+                papp.append(papp[-1])
+                validity.append(False)
         return papp, validity
 
     def select_base(self):
@@ -122,8 +127,16 @@ class JsonHistoricDataStore:
         validity = []
         kwh_per_wh = 0.001
         for frame in self.frames:
-            base.append(int(frame['BASE']['data']) * kwh_per_wh)
-            validity.append(frame['BASE']['valid'])
+            try:
+                if frame['BASE']['valid']:
+                    base.append(int(frame['BASE']['data']) * kwh_per_wh)
+                else:
+                    base.append(base[-1])
+                validity.append(frame['BASE']['valid'])
+            except (ValueError, KeyError):
+                if base:
+                    base.append(base[-1])
+                validity.append(False)
         return base, validity
 
 
@@ -161,17 +174,29 @@ class CsvHistoricDataStore:
 
     def select_papp(self):
         papp = []
+        validity = []
         for frame in self.frames:
-            papp.append(int(frame[2]))
-        validity = [True] * len(self.frames)
+            try:
+                papp.append(int(frame[2]))
+                validity.append(True)
+            except ValueError:
+                if papp:
+                    papp.append(papp[-1])
+                validity.append(False)
         return papp, validity
 
     def select_base(self):
         base = []
+        validity = []
         kwh_per_wh = 0.001
         for frame in self.frames:
-            base.append(int(frame[1]) * kwh_per_wh)
-        validity = [True] * len(self.frames)
+            try:
+                base.append(int(frame[1]) * kwh_per_wh)
+                validity.append(True)
+            except ValueError:
+                if base:
+                    base.append(base[-1])
+                validity.append(False)
         return base, validity
 
 
