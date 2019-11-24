@@ -8,8 +8,8 @@ class Analyzer:
         didx = 200  # around 5 min averaging @ 1.55 frames per second
         time_avgpower = time[:-didx]
         avgpower_validity = [True] * len(time_avgpower)
-        d_time = [time[i + didx] / 1000 - time[i] / 1000 for i in range(len(time) - didx)]
-        j_per_wh = 3600  # joules per watt-hour
+        d_time = [time[i + didx] - time[i] for i in range(len(time) - didx)]
+        j_per_wh = 3.6e6  # joules per kilowatt-hour
         avgpower_values = [(index_values[i + didx] - index_values[i]) * j_per_wh / d_time[i] for i in
                            range(len(d_time))]
         return time_avgpower, avgpower_values, avgpower_validity
@@ -168,8 +168,9 @@ class CsvHistoricDataStore:
 
     def select_base(self):
         base = []
+        kwh_per_wh = 0.001
         for frame in self.frames:
-            base.append(int(frame[1]))
+            base.append(int(frame[1]) * kwh_per_wh)
         validity = [True] * len(self.frames)
         return base, validity
 
