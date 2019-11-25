@@ -44,6 +44,10 @@ class Interface:
         self.view_pane_avgpower = ttk.Frame(self.notebook, width=800, height=500)
         self.notebook.add(self.view_pane_avgpower, text="Puissance moyenne")
         self.window.add(self.notebook)
+        self.view_pane_histpowertime = ttk.Frame(self.notebook, width=800, height=500)
+        self.notebook.add(self.view_pane_histpowertime, text="Durée vs puissance moyenne")
+        self.view_pane_histpowerenergy = ttk.Frame(self.notebook, width=800, height=500)
+        self.notebook.add(self.view_pane_histpowerenergy, text="Énergie vs puissance moyenne")
 
         self.file_prompt = tk.Label(self.config_pane, text="Fichier de données :")
         self.file_prompt.grid(column=0, row=0, sticky=tk.W)
@@ -76,7 +80,7 @@ class Interface:
         self.json_format = tk.Radiobutton(self.config_pane, text="JSON", variable=self.selected_format, value="json", padx=20)
         self.json_format.grid(column=0, row=7, sticky=tk.W)
 
-        # View tab
+        # View tabs
         self.figure_power = plt.Figure(figsize=(5, 4), dpi=100)
         self.canvas_power = FigureCanvasTkAgg(self.figure_power, master=self.view_pane_power)
         self.canvas_power.draw()
@@ -100,6 +104,22 @@ class Interface:
         self.avgpower_toolbar = NavigationToolbar2Tk(self.canvas_avgpower, self.view_pane_avgpower)
         self.avgpower_toolbar.update()
         self.canvas_avgpower.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
+
+        self.figure_histpowertime = plt.Figure(figsize=(5, 4), dpi=100)
+        self.canvas_histpowertime = FigureCanvasTkAgg(self.figure_histpowertime, master=self.view_pane_histpowertime)
+        self.canvas_histpowertime.draw()
+        self.canvas_histpowertime.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
+        self.histpower_toolbar = NavigationToolbar2Tk(self.canvas_histpowertime, self.view_pane_histpowertime)
+        self.histpower_toolbar.update()
+        self.canvas_histpowertime.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
+
+        self.figure_histpowerenergy = plt.Figure(figsize=(5, 4), dpi=100)
+        self.canvas_histpowerenergy = FigureCanvasTkAgg(self.figure_histpowerenergy, master=self.view_pane_histpowerenergy)
+        self.canvas_histpowerenergy.draw()
+        self.canvas_histpowerenergy.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
+        self.histpower_toolbar = NavigationToolbar2Tk(self.canvas_histpowerenergy, self.view_pane_histpowerenergy)
+        self.histpower_toolbar.update()
+        self.canvas_histpowerenergy.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
 
         self.file_browse["command"] = (lambda: self.get_path(self.file_entry))
         self.file_import["command"] = self.import_button_action
@@ -138,6 +158,9 @@ class Interface:
         self.update_power_figure()
         self.update_index_figure()
         self.update_avgpower_figure()
+        self.update_histpowertime_figure()
+        self.update_histpowerenergy_figure()
+
 
     def update_power_figure(self):
         width, height = self.canvas_power.get_width_height()
@@ -156,6 +179,18 @@ class Interface:
         dpi = 100
         self.canvas_avgpower.figure = self.anl.get_figure_avgpower(width, height, dpi)
         self.canvas_avgpower.draw()
+
+    def update_histpowertime_figure(self):
+        width, height = self.canvas_histpowertime.get_width_height()
+        dpi = 100
+        self.canvas_histpowertime.figure = self.anl.get_figure_hist_power_time(width, height, dpi)
+        self.canvas_histpowertime.draw()
+
+    def update_histpowerenergy_figure(self):
+        width, height = self.canvas_histpowerenergy.get_width_height()
+        dpi = 100
+        self.canvas_histpowerenergy.figure = self.anl.get_figure_hist_power_energy(width, height, dpi)
+        self.canvas_histpowerenergy.draw()
 
     def mainloop(self):
         self.root.mainloop()

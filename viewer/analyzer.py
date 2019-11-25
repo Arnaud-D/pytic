@@ -9,7 +9,7 @@ class Analyzer:
         time_avgpower = time[:-didx]
         avgpower_validity = [True] * len(time_avgpower)
         d_time = [time[i + didx] - time[i] for i in range(len(time) - didx)]
-        j_per_wh = 3.6e6  # joules per kilowatt-hour
+        j_per_wh = 3.6e6  # joules per watt-hour
         avgpower_values = [(index_values[i + didx] - index_values[i]) * j_per_wh / d_time[i] for i in
                            range(len(d_time))]
         return time_avgpower, avgpower_values, avgpower_validity
@@ -63,6 +63,36 @@ class Analyzer:
         invalid_data = [self.avgpower.values[i] for i in range(len(self.avgpower.validity)) if not self.avgpower.validity[i]]
         invalid_time = [self.avgpower.time[i] for i in range(len(self.avgpower.validity)) if not self.avgpower.validity[i]]
         figure.gca().plot(invalid_time, invalid_data, 'r. ')
+        return figure
+
+    def get_figure_hist_power_time(self, width, height, dpi):
+        figure = plt.Figure(figsize=(width / dpi, height / dpi), dpi=dpi)
+        ax = figure.add_subplot(2, 1, 1)
+        dtime = [self.avgpower.time[i+1] - self.avgpower.time[i] for i in range(len(self.avgpower.time)-1)]
+        ax.hist(self.avgpower.values[:-1], bins=range(0, 6000, 200), weights=dtime)
+        ax.set_xlabel("Puissance moyenne (W)")
+        ax.set_ylabel("Durée (s)")
+
+        ax = figure.add_subplot(2, 1, 2)
+        ax.hist(self.avgpower.values[:-1], bins=range(0, 6000, 50), weights=dtime, cumulative=True, density=True)
+        ax.grid()
+        ax.set_ylabel("Durée cumulée normalisée")
+        ax.set_xlabel("Puissance moyenne (W)")
+        return figure
+
+    def get_figure_hist_power_energy(self, width, height, dpi):
+        figure = plt.Figure(figsize=(width / dpi, height / dpi), dpi=dpi)
+        ax = figure.add_subplot(2, 1, 1)
+        kwh_per_j = 1/3.6e6
+        energy = [(self.avgpower.time[i+1] - self.avgpower.time[i])*self.avgpower.values[i]*kwh_per_j for i in range(len(self.avgpower.time)-1)]
+        ax.hist(self.avgpower.values[:-1], bins=range(0, 6000, 50), weights=energy)
+        ax.set_ylabel("Énergie (kWh)")
+
+        ax = figure.add_subplot(2, 1, 2)
+        ax.hist(self.avgpower.values[:-1], bins=range(0, 6000, 50), weights=energy, cumulative=True, density=True)
+        ax.grid()
+        ax.set_ylabel("Énergie cumulée normalisée")
+        ax.set_xlabel("Puissance moyenne (W)")
         return figure
 
 
