@@ -161,7 +161,6 @@ class Interface:
         self.update_histpowertime_figure()
         self.update_histpowerenergy_figure()
 
-
     def update_power_figure(self):
         width, height = self.canvas_power.get_width_height()
         dpi = 100

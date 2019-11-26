@@ -1,18 +1,20 @@
 import json
 import matplotlib.pyplot as plt
+from scipy.signal import savgol_filter
 
 
 class Analyzer:
     @staticmethod
     def compute_avgpower(index_values, time):
-        didx = 200  # around 5 min averaging @ 1.55 frames per second
-        time_avgpower = time[:-didx]
-        avgpower_validity = [True] * len(time_avgpower)
-        d_time = [time[i + didx] - time[i] for i in range(len(time) - didx)]
+        # Filter index values using Savitzky Golay filter. We pretend that the data points are equally spaced.
+        # 195 samples <=> 5 min of data @ 1.55 frames/s
+        dtime = [time[i+1] - time[i] for i in range(len(time)-1)]
+        delta = sum(dtime) / len(dtime)
+        deriv_index_values_f = savgol_filter(index_values, 195, 2, deriv=1, delta=delta)
         j_per_wh = 3.6e6  # joules per watt-hour
-        avgpower_values = [(index_values[i + didx] - index_values[i]) * j_per_wh / d_time[i] for i in
-                           range(len(d_time))]
-        return time_avgpower, avgpower_values, avgpower_validity
+        deriv_index_values = [d * j_per_wh for d in deriv_index_values_f]
+        avgpower_validity = [True] * len(deriv_index_values)
+        return time, deriv_index_values, avgpower_validity
 
     def __init__(self):
         self.power = None
