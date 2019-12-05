@@ -3,6 +3,19 @@ import matplotlib.pyplot as plt
 from scipy.signal import savgol_filter
 
 
+def create(mode, fmt, filename):
+    if mode == "historic" and fmt == "json":
+        return JsonHistoricAnalyzer(filename)
+    elif mode == "historic" and fmt == "csv":
+        return CsvHistoricAnalyzer(filename)
+    elif mode == "standard" and fmt == "json":
+        return JsonStandardAnalyzer(filename)
+    elif mode == "standard" and fmt == "csv":
+        return CsvStandardAnalyzer(filename)
+    else:
+        raise ValueError
+
+
 class Analyzer:
     @staticmethod
     def compute_avgpower(index_values, time):
@@ -236,17 +249,20 @@ class JsonHistoricAnalyzer(Analyzer):
     def __init__(self, filename):
         super().__init__()
         self.datastore = JsonHistoricDataStore(filename)
+        self.analyze()
 
 
 class CsvHistoricAnalyzer(Analyzer):
     def __init__(self, filename):
         super().__init__()
         self.datastore = CsvHistoricDataStore(filename)
+        self.analyze()
 
 
 class JsonStandardAnalyzer(Analyzer):
     def __init__(self, filename):
         super().__init__()
+        self.analyze()
 
     def analyze(self):
         raise NotImplementedError
@@ -255,6 +271,7 @@ class JsonStandardAnalyzer(Analyzer):
 class CsvStandardAnalyzer(Analyzer):
     def __init__(self, filename):
         super().__init__()
+        self.analyze()
 
     def analyze(self):
         raise NotImplementedError

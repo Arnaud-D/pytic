@@ -8,7 +8,28 @@ from matplotlib.backends.backend_tkagg import (
     FigureCanvasTkAgg, NavigationToolbar2Tk)
 import analyzer
 import json
+
 matplotlib.use("TkAgg")
+
+
+class FigurePane(ttk.Frame):
+    def __init__(self, parent, width, height, name):
+        super().__init__(parent, width=width, height=height)
+        self.figure = plt.Figure(figsize=(5, 4), dpi=100)
+        self.canvas = FigureCanvasTkAgg(self.figure, master=self)
+        self.canvas.draw()
+        self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
+        self.toolbar = NavigationToolbar2Tk(self.canvas, self)
+        self.toolbar.update()
+        self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
+        self.name = name
+        self.fig_fun = None
+
+    def update_fig(self):
+        width, height = self.canvas.get_width_height()
+        dpi = 100
+        self.canvas.figure = self.fig_fun(width, height, dpi)
+        self.canvas.draw()
 
 
 class Interface:
@@ -21,6 +42,7 @@ class Interface:
             data_file_entry.insert(0, file)
 
     def __init__(self, title):
+        self.anl = None
         self.root = tk.Tk()
         self.root.title(title)
         self.root.config(padx=0)
@@ -35,19 +57,18 @@ class Interface:
         self.config_pane.grid_columnconfigure(index=1, weight=0, minsize=50)
         self.window.add(self.config_pane)
 
-        self.notebook = ttk.Notebook(self.window)
+        self.notebook = ttk.Notebook(self.window, width=800, height=500)
         self.notebook.grid(column=1, row=0, sticky=tk.W + tk.E)
-        self.view_pane_power = ttk.Frame(self.notebook, width=800, height=500)
-        self.notebook.add(self.view_pane_power, text="Puissance apparente")
-        self.view_pane_index = ttk.Frame(self.notebook, width=800, height=500)
-        self.notebook.add(self.view_pane_index, text="Index")
-        self.view_pane_avgpower = ttk.Frame(self.notebook, width=800, height=500)
-        self.notebook.add(self.view_pane_avgpower, text="Puissance moyenne")
+
+        w, h = 800, 500
+        self.figure_panes = {'index': FigurePane(self.notebook, w, h, "Index"),
+                             'power': FigurePane(self.notebook, w, h, "Puissance apparente"),
+                             'avgpower': FigurePane(self.notebook, w, h, "Puissance moyenne"),
+                             'histpowertime': FigurePane(self.notebook, w, h, "Durée vs puissance moyenne"),
+                             'histpowerenergy': FigurePane(self.notebook, w, h, "Énergie vs puissance moyenne")}
+        for fp in self.figure_panes.values():
+            self.notebook.add(fp, text=fp.name)
         self.window.add(self.notebook)
-        self.view_pane_histpowertime = ttk.Frame(self.notebook, width=800, height=500)
-        self.notebook.add(self.view_pane_histpowertime, text="Durée vs puissance moyenne")
-        self.view_pane_histpowerenergy = ttk.Frame(self.notebook, width=800, height=500)
-        self.notebook.add(self.view_pane_histpowerenergy, text="Énergie vs puissance moyenne")
 
         self.file_prompt = tk.Label(self.config_pane, text="Fichier de données :")
         self.file_prompt.grid(column=0, row=0, sticky=tk.W)
@@ -66,83 +87,33 @@ class Interface:
         self.mode_label.grid(column=0, row=2, sticky=tk.W)
         # -- Options
         self.selected_mode = tk.StringVar(None, "historic")
-        self.historic_mode = tk.Radiobutton(self.config_pane, text="Historique", variable=self.selected_mode, value="historic", padx=20)
+        self.historic_mode = tk.Radiobutton(self.config_pane, text="Historique", variable=self.selected_mode,
+                                            value="historic", padx=20)
         self.historic_mode.grid(column=0, row=3, sticky=tk.W)
-        self.standard_mode = tk.Radiobutton(self.config_pane, text="Standard", variable=self.selected_mode, value="standard", padx=20)
+        self.standard_mode = tk.Radiobutton(self.config_pane, text="Standard", variable=self.selected_mode,
+                                            value="standard", padx=20)
         self.standard_mode.grid(column=0, row=4, sticky=tk.W)
         # - Format selection
         # -- Mode label
         self.format_label = tk.Label(self.config_pane, text="Format du fichier")
         self.format_label.grid(column=0, row=5, sticky=tk.W)
         self.selected_format = tk.StringVar(None, "json")
-        self.csv_format = tk.Radiobutton(self.config_pane, text="CSV", variable=self.selected_format, value="csv", padx=20)
+        self.csv_format = tk.Radiobutton(self.config_pane, text="CSV", variable=self.selected_format, value="csv",
+                                         padx=20)
         self.csv_format.grid(column=0, row=6, sticky=tk.W)
-        self.json_format = tk.Radiobutton(self.config_pane, text="JSON", variable=self.selected_format, value="json", padx=20)
+        self.json_format = tk.Radiobutton(self.config_pane, text="JSON", variable=self.selected_format, value="json",
+                                          padx=20)
         self.json_format.grid(column=0, row=7, sticky=tk.W)
-
-        # View tabs
-        self.figure_power = plt.Figure(figsize=(5, 4), dpi=100)
-        self.canvas_power = FigureCanvasTkAgg(self.figure_power, master=self.view_pane_power)
-        self.canvas_power.draw()
-        self.canvas_power.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
-        self.power_toolbar = NavigationToolbar2Tk(self.canvas_power, self.view_pane_power)
-        self.power_toolbar.update()
-        self.canvas_power.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
-
-        self.figure_index = plt.Figure(figsize=(5, 4), dpi=100)
-        self.canvas_index = FigureCanvasTkAgg(self.figure_index, master=self.view_pane_index)
-        self.canvas_index.draw()
-        self.canvas_index.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
-        self.index_toolbar = NavigationToolbar2Tk(self.canvas_index, self.view_pane_index)
-        self.index_toolbar.update()
-        self.canvas_index.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
-
-        self.figure_avgpower = plt.Figure(figsize=(5, 4), dpi=100)
-        self.canvas_avgpower = FigureCanvasTkAgg(self.figure_avgpower, master=self.view_pane_avgpower)
-        self.canvas_avgpower.draw()
-        self.canvas_avgpower.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
-        self.avgpower_toolbar = NavigationToolbar2Tk(self.canvas_avgpower, self.view_pane_avgpower)
-        self.avgpower_toolbar.update()
-        self.canvas_avgpower.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
-
-        self.figure_histpowertime = plt.Figure(figsize=(5, 4), dpi=100)
-        self.canvas_histpowertime = FigureCanvasTkAgg(self.figure_histpowertime, master=self.view_pane_histpowertime)
-        self.canvas_histpowertime.draw()
-        self.canvas_histpowertime.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
-        self.histpower_toolbar = NavigationToolbar2Tk(self.canvas_histpowertime, self.view_pane_histpowertime)
-        self.histpower_toolbar.update()
-        self.canvas_histpowertime.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
-
-        self.figure_histpowerenergy = plt.Figure(figsize=(5, 4), dpi=100)
-        self.canvas_histpowerenergy = FigureCanvasTkAgg(self.figure_histpowerenergy, master=self.view_pane_histpowerenergy)
-        self.canvas_histpowerenergy.draw()
-        self.canvas_histpowerenergy.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
-        self.histpower_toolbar = NavigationToolbar2Tk(self.canvas_histpowerenergy, self.view_pane_histpowerenergy)
-        self.histpower_toolbar.update()
-        self.canvas_histpowerenergy.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
 
         self.file_browse["command"] = (lambda: self.get_path(self.file_entry))
         self.file_import["command"] = self.import_button_action
-
-        self.anl = None
 
     def import_button_action(self):
         mode = self.selected_mode.get()
         fmt = self.selected_format.get()
         filename = self.file_entry.get()
-        if mode == "historic" and fmt == "json":
-            self.anl = analyzer.JsonHistoricAnalyzer(filename)
-        elif mode == "historic" and fmt == "csv":
-            self.anl = analyzer.CsvHistoricAnalyzer(filename)
-        elif mode == "standard" and fmt == "json":
-            self.anl = analyzer.JsonStandardAnalyzer(filename)
-        elif mode == "standard" and fmt == "csv":
-            self.anl = analyzer.CsvStandardAnalyzer(filename)
-        else:
-            raise ValueError
-
         try:
-            self.anl.analyze()
+            self.anl = analyzer.create(mode, fmt, filename)
         except FileNotFoundError:
             mb.showerror("Erreur", "L'import du fichier a échoué. Le fichier n'existe pas.")
             return
@@ -155,41 +126,15 @@ class Interface:
         except NotImplementedError:
             mb.showinfo("Information", "L'import du fichier a échoué. La fonctionnalité n'est pas encore disponible.")
             return
-        self.update_power_figure()
-        self.update_index_figure()
-        self.update_avgpower_figure()
-        self.update_histpowertime_figure()
-        self.update_histpowerenergy_figure()
 
-    def update_power_figure(self):
-        width, height = self.canvas_power.get_width_height()
-        dpi = 100
-        self.canvas_power.figure = self.anl.get_figure_power(width, height, dpi)
-        self.canvas_power.draw()
-
-    def update_index_figure(self):
-        width, height = self.canvas_index.get_width_height()
-        dpi = 100
-        self.canvas_index.figure = self.anl.get_figure_index(width, height, dpi)
-        self.canvas_index.draw()
-
-    def update_avgpower_figure(self):
-        width, height = self.canvas_avgpower.get_width_height()
-        dpi = 100
-        self.canvas_avgpower.figure = self.anl.get_figure_avgpower(width, height, dpi)
-        self.canvas_avgpower.draw()
-
-    def update_histpowertime_figure(self):
-        width, height = self.canvas_histpowertime.get_width_height()
-        dpi = 100
-        self.canvas_histpowertime.figure = self.anl.get_figure_hist_power_time(width, height, dpi)
-        self.canvas_histpowertime.draw()
-
-    def update_histpowerenergy_figure(self):
-        width, height = self.canvas_histpowerenergy.get_width_height()
-        dpi = 100
-        self.canvas_histpowerenergy.figure = self.anl.get_figure_hist_power_energy(width, height, dpi)
-        self.canvas_histpowerenergy.draw()
+        fig_funs = {'index': self.anl.get_figure_index,
+                    'power': self.anl.get_figure_power,
+                    'avgpower': self.anl.get_figure_avgpower,
+                    'histpowertime': self.anl.get_figure_hist_power_time,
+                    'histpowerenergy': self.anl.get_figure_hist_power_energy}
+        for k, fp in self.figure_panes.items():
+            fp.fig_fun = fig_funs[k]
+            fp.update_fig()
 
     def mainloop(self):
         self.root.mainloop()
