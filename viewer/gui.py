@@ -13,6 +13,7 @@ matplotlib.use("TkAgg")
 
 
 class FigurePane(ttk.Frame):
+    """Widget displaying a figure in a pane."""
     def __init__(self, parent, width, height, name):
         super().__init__(parent, width=width, height=height)
         self.figure = plt.Figure(figsize=(5, 4), dpi=100)
@@ -32,7 +33,46 @@ class FigurePane(ttk.Frame):
         self.canvas.draw()
 
 
-class Interface:
+class ModeSelector(ttk.Frame):
+    """Widget for mode selection."""
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.grid_columnconfigure(index=0, weight=1, minsize=100)
+        self.grid_columnconfigure(index=1, weight=0, minsize=50)
+        self.label = tk.Label(self, text="Mode du compteur")
+        self.label.grid(column=0, row=0, sticky=tk.W)
+        self.selected_mode = tk.StringVar(None, "historic")
+        self.historic_mode = tk.Radiobutton(self, text="Historique", variable=self.selected_mode, value="historic",
+                                            padx=20)
+        self.historic_mode.grid(column=0, row=1, sticky=tk.W)
+        self.standard_mode = tk.Radiobutton(self, text="Standard", variable=self.selected_mode, value="standard",
+                                            padx=20)
+        self.standard_mode.grid(column=0, row=2, sticky=tk.W)
+
+    def get_mode(self):
+        return self.selected_mode.get()
+
+
+class FormatSelector(ttk.Frame):
+    """Widget for format selection."""
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.grid_columnconfigure(index=0, weight=1, minsize=100)
+        self.grid_columnconfigure(index=1, weight=0, minsize=50)
+        self.format_label = tk.Label(self, text="Format du fichier")
+        self.format_label.grid(column=0, row=0, sticky=tk.W)
+        self.selected_format = tk.StringVar(None, "json")
+        self.csv_format = tk.Radiobutton(self, text="CSV", variable=self.selected_format, value="csv", padx=20)
+        self.csv_format.grid(column=0, row=1, sticky=tk.W)
+        self.json_format = tk.Radiobutton(self, text="JSON", variable=self.selected_format, value="json", padx=20)
+        self.json_format.grid(column=0, row=2, sticky=tk.W)
+
+    def get_format(self):
+        return self.selected_format.get()
+
+
+class FilenameSelector(ttk.Frame):
+    """Widget for file selection."""
     @staticmethod
     def get_path(data_file_entry):
         """Action when clicking on the browse button."""
@@ -41,77 +81,122 @@ class Interface:
             data_file_entry.delete(0, last=tk.END)
             data_file_entry.insert(0, file)
 
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.file_prompt = tk.Label(self, text="Fichier de données :")
+        self.file_prompt.grid(column=0, row=0, sticky=tk.W)
+        self.file_entry = tk.Entry(self, width=25)
+        self.file_entry.grid(column=0, row=1, sticky=tk.W + tk.E)
+        self.file_browse = tk.Button(self, text="...")
+        self.file_browse.grid(column=1, row=1)
+        self.file_browse["command"] = (lambda: self.get_path(self.file_entry))
+
+    def get_filename(self):
+        return self.file_entry.get()
+
+
+class ImportButton(tk.Button):
+    """Button to validate import."""
+    def __init__(self, parent):
+        super().__init__(parent, text="Importer")
+
+    def set_action(self, import_action):
+        self["command"] = import_action
+
+
+class ConfigPane(ttk.Frame):
+    """Pane regrouping configuration widgets."""
+    def __init__(self, parent):
+        super().__init__(parent, width=300, height=500)
+        self.grid_columnconfigure(index=0, weight=1, minsize=100)
+
+
+class DisplayArea(ttk.Notebook):
+    """Widget for data display."""
+    def __init__(self, parent):
+        super().__init__(parent, width=800, height=500)
+        w, h = 800, 500
+        self.figure_panes = {'index': FigurePane(self, w, h, "Index"),
+                             'power': FigurePane(self, w, h, "Puissance apparente"),
+                             'avgpower': FigurePane(self, w, h, "Puissance moyenne"),
+                             'histpowertime': FigurePane(self, w, h, "Durée vs puissance moyenne"),
+                             'histpowerenergy': FigurePane(self, w, h, "Énergie vs puissance moyenne")}
+        for fp in self.figure_panes.values():
+            self.add(fp, text=fp.name)
+
+    def set_figure_functions(self, functions):
+        for (k, f) in functions.items():
+            self.figure_panes[k].fig_fun = f
+
+    def update_figures(self):
+        for fp in self.figure_panes.values():
+            fp.update_fig()
+
+
+class MainWindow(tk.PanedWindow):
+    def __init__(self, parent):
+        super().__init__(parent, orient=tk.HORIZONTAL, sashrelief=tk.RAISED)
+
+
+class Gui:
     def __init__(self, title):
-        self.anl = None
         self.root = tk.Tk()
         self.root.title(title)
         self.root.config(padx=0)
         self.root.config(pady=0)
 
-        self.window = tk.PanedWindow(self.root, orient=tk.HORIZONTAL, sashrelief=tk.RAISED)
-        self.window.pack(expand=True, fill='both')
+        self.main_window = MainWindow(self.root)
 
-        self.config_pane = ttk.Frame(self.window, width=300, height=500)
-        self.config_pane.grid(column=0, row=0, sticky=tk.W + tk.E)
-        self.config_pane.grid_columnconfigure(index=0, weight=1, minsize=100)
-        self.config_pane.grid_columnconfigure(index=1, weight=0, minsize=50)
-        self.window.add(self.config_pane)
+        self.config_pane = ConfigPane(self.main_window)
+        self.mode_selector = ModeSelector(self.config_pane)
+        self.format_selector = FormatSelector(self.config_pane)
+        self.filename_selector = FilenameSelector(self.config_pane)
+        self.import_button = ImportButton(self.config_pane)
 
-        self.notebook = ttk.Notebook(self.window, width=800, height=500)
-        self.notebook.grid(column=1, row=0, sticky=tk.W + tk.E)
+        self.display_area = DisplayArea(self.main_window)
 
-        w, h = 800, 500
-        self.figure_panes = {'index': FigurePane(self.notebook, w, h, "Index"),
-                             'power': FigurePane(self.notebook, w, h, "Puissance apparente"),
-                             'avgpower': FigurePane(self.notebook, w, h, "Puissance moyenne"),
-                             'histpowertime': FigurePane(self.notebook, w, h, "Durée vs puissance moyenne"),
-                             'histpowerenergy': FigurePane(self.notebook, w, h, "Énergie vs puissance moyenne")}
-        for fp in self.figure_panes.values():
-            self.notebook.add(fp, text=fp.name)
-        self.window.add(self.notebook)
+        self.main_window.add(self.config_pane)
+        self.main_window.add(self.display_area)
+        self.main_window.pack(expand=True, fill='both')
+        self.config_pane.grid(column=0, row=0, sticky=tk.W+tk.E+tk.N+tk.S)
+        self.display_area.grid(column=1, row=0, sticky=tk.W+tk.E)
+        self.filename_selector.grid(column=0, row=0, sticky=tk.W)
+        self.format_selector.grid(column=0, row=1, sticky=tk.W)
+        self.mode_selector.grid(column=0, row=2, sticky=tk.W)
+        self.import_button.grid(column=0, row=3, sticky=tk.W+tk.E)
 
-        self.file_prompt = tk.Label(self.config_pane, text="Fichier de données :")
-        self.file_prompt.grid(column=0, row=0, sticky=tk.W)
-        # -- Data file entry
-        self.file_entry = tk.Entry(self.config_pane, width=25)
-        self.file_entry.grid(column=0, row=1, sticky=tk.W + tk.E)
-        # -- Data file browse button
-        self.file_browse = tk.Button(self.config_pane, text="...")
-        self.file_browse.grid(column=1, row=1)
-        # -- Data file import button
-        self.file_import = tk.Button(self.config_pane, text="Importer")
-        self.file_import.grid(column=0, row=8, columnspan=2, sticky=tk.W + tk.E)
-        # - Mode selection
-        # -- Mode label
-        self.mode_label = tk.Label(self.config_pane, text="Mode du compteur")
-        self.mode_label.grid(column=0, row=2, sticky=tk.W)
-        # -- Options
-        self.selected_mode = tk.StringVar(None, "historic")
-        self.historic_mode = tk.Radiobutton(self.config_pane, text="Historique", variable=self.selected_mode,
-                                            value="historic", padx=20)
-        self.historic_mode.grid(column=0, row=3, sticky=tk.W)
-        self.standard_mode = tk.Radiobutton(self.config_pane, text="Standard", variable=self.selected_mode,
-                                            value="standard", padx=20)
-        self.standard_mode.grid(column=0, row=4, sticky=tk.W)
-        # - Format selection
-        # -- Mode label
-        self.format_label = tk.Label(self.config_pane, text="Format du fichier")
-        self.format_label.grid(column=0, row=5, sticky=tk.W)
-        self.selected_format = tk.StringVar(None, "json")
-        self.csv_format = tk.Radiobutton(self.config_pane, text="CSV", variable=self.selected_format, value="csv",
-                                         padx=20)
-        self.csv_format.grid(column=0, row=6, sticky=tk.W)
-        self.json_format = tk.Radiobutton(self.config_pane, text="JSON", variable=self.selected_format, value="json",
-                                          padx=20)
-        self.json_format.grid(column=0, row=7, sticky=tk.W)
+    def get_mode(self):
+        return self.mode_selector.get_mode()
 
-        self.file_browse["command"] = (lambda: self.get_path(self.file_entry))
-        self.file_import["command"] = self.import_button_action
+    def get_format(self):
+        return self.format_selector.get_format()
+
+    def get_filename(self):
+        return self.filename_selector.get_filename()
+
+    def set_import_action(self, import_action):
+        self.import_button.set_action(import_action)
+
+    def set_figure_functions(self, functions):
+        self.display_area.set_figure_functions(functions)
+
+    def update_figures(self):
+        self.display_area.update_figures()
+
+    def mainloop(self):
+        self.root.mainloop()
+
+
+class Interface:
+    def __init__(self, title):
+        self.gui = Gui(title)
+        self.gui.set_import_action(self.import_button_action)
+        self.anl = None
 
     def import_button_action(self):
-        mode = self.selected_mode.get()
-        fmt = self.selected_format.get()
-        filename = self.file_entry.get()
+        mode = self.gui.get_mode()
+        fmt = self.gui.get_format()
+        filename = self.gui.get_filename()
         try:
             self.anl = analyzer.create(mode, fmt, filename)
         except FileNotFoundError:
@@ -132,9 +217,8 @@ class Interface:
                     'avgpower': self.anl.get_figure_avgpower,
                     'histpowertime': self.anl.get_figure_hist_power_time,
                     'histpowerenergy': self.anl.get_figure_hist_power_energy}
-        for k, fp in self.figure_panes.items():
-            fp.fig_fun = fig_funs[k]
-            fp.update_fig()
+        self.gui.set_figure_functions(fig_funs)
+        self.gui.update_figures()
 
     def mainloop(self):
-        self.root.mainloop()
+        self.gui.mainloop()
