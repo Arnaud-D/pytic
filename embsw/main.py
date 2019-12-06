@@ -12,9 +12,9 @@ SLEEP_TIME_INACTIVE = 50  # (ms)
 SLEEP_TIME_ACTIVE = 10  # (ms)
 
 # Configuration
-LOGTYPE = "json"
-CFG = "historic"
-OUTPUT_FILE = "data.txt"
+METER_MODE = "historic"
+OUTPUT_FILE_DATA = "data.txt"
+OUTPUT_FILE_TIME = "time.txt"
 UART_CHANNEL = 3
 
 
@@ -26,10 +26,10 @@ def main():
 
 
 def logger_mode():
-    log = logger.Logger(LOGTYPE,
-                        CFG,
+    log = logger.Logger(METER_MODE,
                         UART_CHANNEL,
-                        OUTPUT_FILE,
+                        OUTPUT_FILE_DATA,
+                        OUTPUT_FILE_TIME,
                         SLEEP_TIME_ACTIVE,
                         SLEEP_TIME_INACTIVE,
                         notifications.frame_received)
