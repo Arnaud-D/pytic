@@ -1,19 +1,16 @@
 import json
 import matplotlib.pyplot as plt
 from scipy.signal import savgol_filter
+import tic_parser
 
 
-def create(mode, fmt, filename):
-    if mode == "historic" and fmt == "json":
-        return JsonHistoricAnalyzer(filename)
-    elif mode == "historic" and fmt == "csv":
-        return CsvHistoricAnalyzer(filename)
-    elif mode == "standard" and fmt == "json":
-        return JsonStandardAnalyzer(filename)
-    elif mode == "standard" and fmt == "csv":
-        return CsvStandardAnalyzer(filename)
-    else:
-        raise ValueError
+def create(meter_mode, data_filename, time_filename):
+    parser = tic_parser.create(meter_mode, data_filename, time_filename)
+    frames = parser.parse()
+    analyzer = Analyzer()
+    analyzer.datastore = JsonHistoricDataStore(frames)
+    analyzer.analyze()
+    return analyzer
 
 
 class Analyzer:
@@ -128,8 +125,8 @@ class JsonHistoricDataStore:
                 frames.append(json.loads(line))
         return frames
 
-    def __init__(self, filename):
-        self.frames = self.load(filename)
+    def __init__(self, frames):
+        self.frames = frames
 
     def select(self, field):
         if field == "timestamp":
@@ -185,92 +182,10 @@ class JsonHistoricDataStore:
         return base, validity
 
 
-class CsvHistoricDataStore:
-    @staticmethod
-    def load(filename):
-        """Load data from a file."""
-        frames = []
-        with open(filename, "r") as f:
-            for line in f.readlines():
-                frames.append(line.split(','))
-        return frames
-
-    def __init__(self, filename):
-        self.frames = self.load(filename)
-
-    def select(self, field):
-        """Extract a field from the data."""
-        if field == "timestamp":
-            return self.select_timestamp()
-        elif field == "PAPP":
-            return self.select_papp()
-        elif field == "BASE":
-            return self.select_base()
-        else:
-            raise KeyError
-
-    def select_timestamp(self):
-        timestamp = []
-        s_per_ms = 0.001
-        for frame in self.frames:
-            timestamp.append(int(frame[0]) * s_per_ms)
-        validity = [True] * len(self.frames)
-        return timestamp, validity
-
-    def select_papp(self):
-        papp = []
-        validity = []
-        for frame in self.frames:
-            try:
-                papp.append(int(frame[2]))
-                validity.append(True)
-            except ValueError:
-                if papp:
-                    papp.append(papp[-1])
-                validity.append(False)
-        return papp, validity
-
-    def select_base(self):
-        base = []
-        validity = []
-        kwh_per_wh = 0.001
-        for frame in self.frames:
-            try:
-                base.append(int(frame[1]) * kwh_per_wh)
-                validity.append(True)
-            except ValueError:
-                if base:
-                    base.append(base[-1])
-                validity.append(False)
-        return base, validity
-
-
 class JsonHistoricAnalyzer(Analyzer):
     def __init__(self, filename):
         super().__init__()
         self.datastore = JsonHistoricDataStore(filename)
-        self.analyze()
-
-
-class CsvHistoricAnalyzer(Analyzer):
-    def __init__(self, filename):
-        super().__init__()
-        self.datastore = CsvHistoricDataStore(filename)
-        self.analyze()
-
-
-class JsonStandardAnalyzer(Analyzer):
-    def __init__(self, filename):
-        super().__init__()
-        self.analyze()
-
-    def analyze(self):
-        raise NotImplementedError
-
-
-class CsvStandardAnalyzer(Analyzer):
-    def __init__(self, filename):
-        super().__init__()
         self.analyze()
 
     def analyze(self):

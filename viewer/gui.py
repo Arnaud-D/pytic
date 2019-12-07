@@ -7,7 +7,6 @@ import tkinter.messagebox as mb
 from matplotlib.backends.backend_tkagg import (
     FigureCanvasTkAgg, NavigationToolbar2Tk)
 import analyzer
-import json
 
 matplotlib.use("TkAgg")
 
@@ -53,24 +52,6 @@ class ModeSelector(ttk.Frame):
         return self.selected_mode.get()
 
 
-class FormatSelector(ttk.Frame):
-    """Widget for format selection."""
-    def __init__(self, parent):
-        super().__init__(parent)
-        self.grid_columnconfigure(index=0, weight=1, minsize=100)
-        self.grid_columnconfigure(index=1, weight=0, minsize=50)
-        self.format_label = tk.Label(self, text="Format du fichier")
-        self.format_label.grid(column=0, row=0, sticky=tk.W)
-        self.selected_format = tk.StringVar(None, "json")
-        self.csv_format = tk.Radiobutton(self, text="CSV", variable=self.selected_format, value="csv", padx=20)
-        self.csv_format.grid(column=0, row=1, sticky=tk.W)
-        self.json_format = tk.Radiobutton(self, text="JSON", variable=self.selected_format, value="json", padx=20)
-        self.json_format.grid(column=0, row=2, sticky=tk.W)
-
-    def get_format(self):
-        return self.selected_format.get()
-
-
 class FilenameSelector(ttk.Frame):
     """Widget for file selection."""
     @staticmethod
@@ -81,9 +62,9 @@ class FilenameSelector(ttk.Frame):
             data_file_entry.delete(0, last=tk.END)
             data_file_entry.insert(0, file)
 
-    def __init__(self, parent):
+    def __init__(self, parent, text):
         super().__init__(parent)
-        self.file_prompt = tk.Label(self, text="Fichier de données :")
+        self.file_prompt = tk.Label(self, text=text)
         self.file_prompt.grid(column=0, row=0, sticky=tk.W)
         self.file_entry = tk.Entry(self, width=25)
         self.file_entry.grid(column=0, row=1, sticky=tk.W + tk.E)
@@ -93,6 +74,18 @@ class FilenameSelector(ttk.Frame):
 
     def get_filename(self):
         return self.file_entry.get()
+
+
+class DataFilenameSelector(FilenameSelector):
+    """Widget for the selection of the data file."""
+    def __init__(self, parent):
+        super().__init__(parent, "Fichier de données :")
+
+
+class TimeFilenameSelector(FilenameSelector):
+    """Widget for the selection of the time file."""
+    def __init__(self, parent):
+        super().__init__(parent, "Fichier de temps :")
 
 
 class ImportButton(tk.Button):
@@ -149,8 +142,8 @@ class Gui:
 
         self.config_pane = ConfigPane(self.main_window)
         self.mode_selector = ModeSelector(self.config_pane)
-        self.format_selector = FormatSelector(self.config_pane)
-        self.filename_selector = FilenameSelector(self.config_pane)
+        self.datafilename_selector = DataFilenameSelector(self.config_pane)
+        self.timefilename_selector = TimeFilenameSelector(self.config_pane)
         self.import_button = ImportButton(self.config_pane)
 
         self.display_area = DisplayArea(self.main_window)
@@ -160,19 +153,19 @@ class Gui:
         self.main_window.pack(expand=True, fill='both')
         self.config_pane.grid(column=0, row=0, sticky=tk.W+tk.E+tk.N+tk.S)
         self.display_area.grid(column=1, row=0, sticky=tk.W+tk.E)
-        self.filename_selector.grid(column=0, row=0, sticky=tk.W)
-        self.format_selector.grid(column=0, row=1, sticky=tk.W)
+        self.datafilename_selector.grid(column=0, row=0, sticky=tk.W)
+        self.timefilename_selector.grid(column=0, row=1, sticky=tk.W)
         self.mode_selector.grid(column=0, row=2, sticky=tk.W)
         self.import_button.grid(column=0, row=3, sticky=tk.W+tk.E)
 
-    def get_mode(self):
+    def get_meter_mode(self):
         return self.mode_selector.get_mode()
 
-    def get_format(self):
-        return self.format_selector.get_format()
+    def get_datafilename(self):
+        return self.datafilename_selector.get_filename()
 
-    def get_filename(self):
-        return self.filename_selector.get_filename()
+    def get_timefilename(self):
+        return self.timefilename_selector.get_filename()
 
     def set_import_action(self, import_action):
         self.import_button.set_action(import_action)
@@ -194,18 +187,16 @@ class Interface:
         self.anl = None
 
     def import_button_action(self):
-        mode = self.gui.get_mode()
-        fmt = self.gui.get_format()
-        filename = self.gui.get_filename()
+        meter_mode = self.gui.get_meter_mode()
+        datafilename = self.gui.get_datafilename()
+        timefilename = self.gui.get_timefilename()
         try:
-            self.anl = analyzer.create(mode, fmt, filename)
+            self.anl = analyzer.create(meter_mode, datafilename, timefilename)
         except FileNotFoundError:
             mb.showerror("Erreur", "L'import du fichier a échoué. Le fichier n'existe pas.")
             return
-        except json.JSONDecodeError:
-            mb.showerror("Erreur", "L'import du fichier a échoué. Le fichier n'est pas un fichier JSON valide.")
-            return
-        except ValueError:
+        except ValueError as e:
+            print(e)
             mb.showerror("Erreur", "L'import du fichier a échoué. Le fichier est probablement corrompu.")
             return
         except NotImplementedError:
