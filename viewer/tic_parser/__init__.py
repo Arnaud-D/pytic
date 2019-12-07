@@ -30,9 +30,8 @@ class HistoricParser:
         with open(self.filename_data, "rb") as file_data:
             data = file_data.read().decode('ascii')
         with open(self.filename_grammar, "r") as file_grammar:
-            parser = lark.Lark(file_grammar, parser="lalr")
-        ast = parser.parse(data)
-        frames = AstTransformer().transform(ast)
+            parser = lark.Lark(file_grammar, parser="lalr", transformer=AstTransformer())
+        frames = parser.parse(data)
         return frames
 
     def parse_times(self):
@@ -46,28 +45,29 @@ def checksum(checkfield):
     return chr((sum([ord(c) for c in checkfield]) & 0x3F) + 0x20)
 
 
-class AstTransformer(lark.visitors.Transformer_InPlace):
-    def group(self, children):
-        payload_node = children[0]
-        expected_checksum = children[1]
+class AstTransformer(lark.Transformer):
+    def group(self, args):
+        payload_node = args[0]
+        expected_checksum = args[1]
         checkfield = ''.join(payload_node.children)
         validity = expected_checksum == checksum(checkfield)
-        dico = {'label': str(payload_node.children[0]),
+        return {'label': str(payload_node.children[0]),
                 'data': str(payload_node.children[2]),
                 'validity': validity}
-        return lark.Tree(data="group", children=[dico])
 
-    def complete_frame(self, children):
+    def complete_frame(self, args):
         dico = {}
-        for c in children:
-            c = c.children[0]
+        for c in args:
             dico[c['label']] = {}
             dico[c['label']]['valid'] = c['validity']
             dico[c['label']]['data'] = c['data']
-        return lark.Tree("complete_frame", dico)
+        return dico
 
-    def start(self, children):
+    def truncated_frame(self, args):
+        return {}
+
+    def start(self, args):
         frames = []
-        for f in children:
-            frames.append(f.children)
+        for f in args:
+            frames.append(f)
         return frames
