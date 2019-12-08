@@ -78,7 +78,6 @@ class Analyzer:
         ax = figure.add_subplot(2, 1, 1)
         dt = np.diff(self.avgpower.time)
         ax.hist(self.avgpower.values[:-1], bins=range(0, 6000, 200), weights=dt)
-        ax.set_xlabel("Puissance moyenne (W)")
         ax.set_ylabel("Durée (s)")
 
         ax = figure.add_subplot(2, 1, 2)
