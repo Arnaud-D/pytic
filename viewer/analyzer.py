@@ -26,7 +26,10 @@ class Analyzer:
         # We pretend that the data points are equally spaced.
         # 195 samples <=> 5 min of data @ 1.55 frames/s
         dt = np.average(np.diff(time))
-        avgpower = scipy.signal.savgol_filter(index_values, window_length=195, polyorder=2, deriv=1, delta=dt)
+        desired_window_length = 195
+        index_length = len(index_values)
+        window_length = desired_window_length if index_length > desired_window_length else index_length
+        avgpower = scipy.signal.savgol_filter(index_values, window_length=window_length, polyorder=2, deriv=1, delta=dt)
         avgpower_validity = np.full_like(avgpower, True)
         return time, avgpower * j_per_wh, avgpower_validity
 
