@@ -7,7 +7,7 @@ import tkinter.messagebox as mb
 from matplotlib.backends.backend_tkagg import (
     FigureCanvasTkAgg, NavigationToolbar2Tk)
 import analyzer
-
+import os
 matplotlib.use("TkAgg")
 
 
@@ -137,6 +137,8 @@ class Gui:
         self.root.title(title)
         self.root.config(padx=0)
         self.root.config(pady=0)
+        icon_path = os.path.join(os.path.dirname(__file__), 'media/icon.png')
+        self.root.tk.call('wm', 'iconphoto', self.root._w, tk.PhotoImage(file=icon_path))
 
         self.main_window = MainWindow(self.root)
 

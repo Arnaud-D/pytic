@@ -1,6 +1,6 @@
 import gui
 
-WINDOW_TITLE = "Visionneuse Linkycom"
+WINDOW_TITLE = "Visionneuse Pytic"
 
 
 def main():
