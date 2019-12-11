@@ -1,6 +1,6 @@
-import lark
 import os
 import pathlib
+import re
 _package_path = pathlib.Path(os.path.dirname(__file__))
 
 
@@ -29,9 +29,26 @@ class HistoricParser:
     def parse_frames(self):
         with open(self.filename_data, "rb") as file_data:
             data = file_data.read().decode('ascii')
-        with open(self.filename_grammar, "r") as file_grammar:
-            parser = lark.Lark(file_grammar, parser="lalr", transformer=AstTransformer())
-        frames = parser.parse(data)
+        pattern_frame = re.compile("\x02(?P<frame_content>.*?)(?P<terminator>[\x03\x04])", flags=re.DOTALL)
+        pattern_group = re.compile("\n(?P<payload>.*?) (?P<checksum>.)\r", flags=re.DOTALL)
+        pattern_payload = re.compile("(?P<label>[^ ]+?) (?P<data>.*)")
+        match_frames = pattern_frame.finditer(data)
+        frames = []
+        for frame in match_frames:
+            if frame.group('terminator') == "\x04":
+                continue
+            match_groups = pattern_group.finditer(frame.group('frame_content'))
+            frame = {}
+            for match_group in match_groups:
+                payload = match_group.group('payload')
+                expected_checksum = match_group.group('checksum')
+                match_label_data = pattern_payload.match(payload)
+                label = match_label_data.group('label')
+                data = match_label_data.group('data')
+                validity = checksum(payload) == expected_checksum
+                frame[label] = {'valid': validity,
+                                'data': data}
+            frames.append(frame)
         return frames
 
     def parse_times(self):
@@ -43,31 +60,3 @@ class HistoricParser:
 def checksum(checkfield):
     """Compute the checksum for a data group."""
     return chr((sum([ord(c) for c in checkfield]) & 0x3F) + 0x20)
-
-
-class AstTransformer(lark.Transformer):
-    def group(self, args):
-        payload_node = args[0]
-        expected_checksum = args[1]
-        checkfield = ''.join(payload_node.children)
-        validity = expected_checksum == checksum(checkfield)
-        return {'label': str(payload_node.children[0]),
-                'data': str(payload_node.children[2]),
-                'validity': validity}
-
-    def complete_frame(self, args):
-        dico = {}
-        for c in args:
-            dico[c['label']] = {}
-            dico[c['label']]['valid'] = c['validity']
-            dico[c['label']]['data'] = c['data']
-        return dico
-
-    def truncated_frame(self, args):
-        return {}
-
-    def start(self, args):
-        frames = []
-        for f in args:
-            frames.append(f)
-        return frames
