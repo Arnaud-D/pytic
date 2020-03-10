@@ -8,6 +8,9 @@ j_per_wh = 3.6e6  # J / Wh
 s_per_ms = 0.001  # s / ms
 kwh_per_wh = 0.001  # kWh / Wh
 kwh_per_j = 1 / 3.6e6  # kWh / J
+h_per_d = 24  # hours per day
+s_per_h = 3600  # seconds per hour
+d_per_w = 7  # days per week
 
 
 def create(meter_mode, data_filename, time_filename=None):
@@ -32,6 +35,28 @@ class Analyzer:
         avgpower = scipy.signal.savgol_filter(index_values, window_length=window_length, polyorder=2, deriv=1, delta=dt)
         avgpower_validity = np.full_like(avgpower, True)
         return time, avgpower * j_per_wh, avgpower_validity
+
+    @staticmethod
+    def compute_seasonality(ts, period):
+        nb_periods = int(np.floor(ts.time[-1]/period))
+        if nb_periods < 1:
+            raise ValueError(period)
+        else:
+            dt = np.average(np.diff(ts.time))  # average sample duration
+            samples_per_period = int(np.floor(period / dt))
+            nb_samples_to_select = nb_periods * samples_per_period
+            time_trunc = ts.time[:nb_samples_to_select]
+            values_trunc = ts.values[:nb_samples_to_select]
+            period_average_filter = np.zeros(nb_samples_to_select + samples_per_period)
+            mask = np.array(range(len(period_average_filter))) % samples_per_period == 0
+            period_average_filter[mask] = 1/nb_periods
+            period_average = np.convolve(values_trunc, period_average_filter)
+            begin_index = len(values_trunc)
+            end_index = len(period_average_filter)
+            time_fin = time_trunc[0:samples_per_period]
+            values_fin = period_average[begin_index:end_index]
+            validity = np.full_like(time_fin, True)
+            return TimeSeries(time_fin, values_fin, validity)
 
     def __init__(self):
         self.power = None
@@ -59,6 +84,20 @@ class Analyzer:
 
     def get_figure_avgpower(self, width, height, dpi):
         return Analyzer.get_figure_with_time(width, height, dpi, self.avgpower, "Puissance moyenne (W)")
+
+    def get_figure_day(self, width, height, dpi):
+        try:
+            average_day = Analyzer.compute_seasonality(self.avgpower, h_per_d * s_per_h)
+            return Analyzer.get_figure_with_time(width, height, dpi, average_day, "Puissance moyenne (W)")
+        except ValueError:
+            return plt.Figure()
+
+    def get_figure_week(self, width, height, dpi):
+        try:
+            average_day = Analyzer.compute_seasonality(self.avgpower, h_per_d * s_per_h * d_per_w)
+            return Analyzer.get_figure_with_time(width, height, dpi, average_day, "Puissance moyenne (W)")
+        except ValueError:
+            return plt.Figure()
 
     @staticmethod
     def get_figure_with_time(width, height, dpi, timeseries, ylabel):
@@ -103,7 +142,7 @@ class Analyzer:
 
 
 class TimeSeries:
-    def __init__(self, time, values, validity):
+    def __init__(self, time, values, validity=None):
         self.time = time
         self.values = values
         self.validity = validity

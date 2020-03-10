@@ -112,6 +112,8 @@ class DisplayArea(ttk.Notebook):
         self.figure_panes = {'index': FigurePane(self, w, h, "Index"),
                              'power': FigurePane(self, w, h, "Puissance apparente"),
                              'avgpower': FigurePane(self, w, h, "Puissance moyenne"),
+                             'avgday': FigurePane(self, w, h, "Jour moyen"),
+                             'avgweek': FigurePane(self, w, h, "Semaine moyenne"),
                              'histpowertime': FigurePane(self, w, h, "Durée vs puissance moyenne"),
                              'histpowerenergy': FigurePane(self, w, h, "Énergie vs puissance moyenne")}
         for fp in self.figure_panes.values():
@@ -208,8 +210,10 @@ class Interface:
         fig_funs = {'index': self.anl.get_figure_index,
                     'power': self.anl.get_figure_power,
                     'avgpower': self.anl.get_figure_avgpower,
+                    'avgday': self.anl.get_figure_day,
+                    'avgweek': self.anl.get_figure_week,
                     'histpowertime': self.anl.get_figure_hist_power_time,
-                    'histpowerenergy': self.anl.get_figure_hist_power_energy}
+                    'histpowerenergy': self.anl.get_figure_hist_power_energy,}
         self.gui.set_figure_functions(fig_funs)
         self.gui.update_figures()
 
