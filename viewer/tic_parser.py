@@ -1,7 +1,4 @@
-import os
-import pathlib
 import re
-_package_path = pathlib.Path(os.path.dirname(__file__))
 
 
 def create(meter_mode, filename_data, filename_time=None):
@@ -17,7 +14,6 @@ class HistoricParser:
     def __init__(self, filename_data, filename_time):
         self.filename_data = filename_data
         self.filename_time = filename_time
-        self.filename_grammar = _package_path / "historic.lark"
 
     def parse(self):
         frames = self.parse_frames()
