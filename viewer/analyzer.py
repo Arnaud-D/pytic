@@ -65,9 +65,9 @@ class Analyzer:
         self.datastore = None
 
     def analyze(self):
-        time, _ = self.datastore.get_field('timestamp')
-        power_values, power_validity = self.datastore.get_field('PAPP')
-        index_values, index_validity = self.datastore.get_field('BASE')
+        time, _ = self.datastore.get_field(b'timestamp')
+        power_values, power_validity = self.datastore.get_field(b'PAPP')
+        index_values, index_validity = self.datastore.get_field(b'BASE')
 
         # Compute derived data
         time_avgpower, avgpower_values, avgpower_validity = self.compute_avgpower(index_values, time)
@@ -152,16 +152,16 @@ class HistoricDatastore:
     def __init__(self, frames):
         self.frames = frames
         self.length = len(self.frames)
-        self.timestamp = self.extract('timestamp', s_per_ms, float)
-        self.papp = self.extract('PAPP', 1, float)
-        self.base = self.extract('BASE', kwh_per_wh, float)
+        self.timestamp = self.extract(b'timestamp', s_per_ms, float)
+        self.papp = self.extract(b'PAPP', 1, float)
+        self.base = self.extract(b'BASE', kwh_per_wh, float)
 
     def get_field(self, field):
-        if field == "timestamp":
+        if field == b"timestamp":
             return self.timestamp
-        elif field == "PAPP":
+        elif field == b"PAPP":
             return self.papp
-        elif field == "BASE":
+        elif field == b"BASE":
             return self.base
         else:
             raise ValueError(field)
@@ -171,8 +171,8 @@ class HistoricDatastore:
         validity = np.full(self.length, False)
         for k, frame in zip(range(self.length), self.frames):
             try:
-                validity[k] = frame[field]['valid']
-                data[k] = converter(frame[field]['data']) if validity[k] else data[k-1]
+                validity[k] = frame[field] is not None
+                data[k] = converter(frame[field]) if validity[k] else data[k - 1]
             except (ValueError, KeyError):  # Field does not exist or cannot be converted
                 data[k] = data[k-1]
                 # validity[k] already false by default

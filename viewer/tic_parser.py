@@ -19,31 +19,33 @@ class HistoricParser:
         frames = self.parse_frames()
         times = self.parse_times()
         for (f, t) in zip(frames, times):
-            f['timestamp'] = {'valid': True, 'data': t}
+            f[b'timestamp'] = t
         return frames
 
     def parse_frames(self):
-        with open(self.filename_data, "rb") as file_data:
-            data = file_data.read().decode('ascii')
-        pattern_frame = re.compile("\x02(?P<frame_content>.*?)(?P<terminator>[\x03\x04])", flags=re.DOTALL)
-        pattern_group = re.compile("\n(?P<payload>.*?) (?P<checksum>.)\r", flags=re.DOTALL)
-        pattern_payload = re.compile("(?P<label>[^ ]+?) (?P<data>.*)")
+        with open(self.filename_data, "rb") as f:
+            data = f.read()
+        pattern_frame = re.compile(b"\x02(?P<frame_content>.*?)(?P<terminator>[\x03\x04])", flags=re.DOTALL)
+        pattern_group = re.compile(b"\n(?P<payload>.*?) (?P<checksum>.)\r", flags=re.DOTALL)
         match_frames = pattern_frame.finditer(data)
         frames = []
-        for frame in match_frames:
-            if frame.group('terminator') == "\x04":
+        for m_frame in match_frames:
+            frame_slice = data[slice(*m_frame.span('frame_content'))]
+            if frame_slice[-1] == 0x04:  # skip truncated frames
                 continue
-            match_groups = pattern_group.finditer(frame.group('frame_content'))
-            frame = {}
+            match_groups = pattern_group.finditer(frame_slice)
+            frame = {b'ADCO': None, b'OPTARIF': None, b'ISOUSC': None, b'BASE': None, b'PTEC': None, b'IINST': None,
+                     b'IMAX': None, b'PAPP': None, b'HHPHC': None, b'MOTDETAT': None}
             for match_group in match_groups:
-                payload = match_group.group('payload')
-                expected_checksum = match_group.group('checksum')
-                match_label_data = pattern_payload.match(payload)
-                label = match_label_data.group('label')
-                data = match_label_data.group('data')
-                validity = checksum(payload) == expected_checksum
-                frame[label] = {'valid': validity,
-                                'data': data}
+                group = match_group.group(0)
+                payload = group[1:-3]
+                if checksum(payload) != group[-2]:
+                    continue
+                split = payload.split(b' ')
+                label = split[0]
+                if label not in frame.keys():
+                    continue
+                frame[label] = split[1]
             frames.append(frame)
         return frames
 
@@ -53,6 +55,6 @@ class HistoricParser:
         return times
 
 
-def checksum(checkfield):
+def checksum(payload):
     """Compute the checksum for a data group."""
-    return chr((sum([ord(c) for c in checkfield]) & 0x3F) + 0x20)
+    return (sum(payload) & 0x3F) + 0x20
