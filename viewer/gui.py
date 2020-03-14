@@ -120,8 +120,8 @@ class DisplayArea(ttk.Notebook):
             self.add(fp, text=fp.name)
 
     def set_figure_functions(self, functions):
-        for (k, f) in functions.items():
-            self.figure_panes[k].fig_fun = f
+        for k in self.figure_panes.keys():
+            self.figure_panes[k].fig_fun = functions[k]
 
     def update_figures(self):
         for fp in self.figure_panes.values():

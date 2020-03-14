@@ -50,7 +50,7 @@ class Analyzer:
             period_average_filter = np.zeros(nb_samples_to_select + samples_per_period)
             mask = np.array(range(len(period_average_filter))) % samples_per_period == 0
             period_average_filter[mask] = 1/nb_periods
-            period_average = np.convolve(values_trunc, period_average_filter)
+            period_average = scipy.signal.convolve(values_trunc, period_average_filter)
             begin_index = len(values_trunc)
             end_index = len(period_average_filter)
             time_fin = time_trunc[0:samples_per_period]
