@@ -113,15 +113,34 @@ class Writer:
         if self.initialized:
             self.file_data.write(data)
             self.file_data.flush()
-            self.file_time.write(str(timestamp) + "\n")
+            self.file_time.write(timestamp + "\n")
             self.file_time.flush()
         else:
             print("Race condition occured...")
 
 
+class Timestamper:
+    def __init__(self, start):
+        self.start = start
+        self.previous_elapsed_millis = 0
+        self.previous_timestamp = 0
+        self.max = 2**30
+        self.times_wrapped = 0
+        self.elapsed_time_func = lambda: pyb.elapsed_millis(self.start)  # useful to test counter looping
+
+    def timestamp(self):
+        elapsed_millis = self.elapsed_time_func()
+        if elapsed_millis < self.previous_elapsed_millis:
+            self.times_wrapped += 1
+        self.previous_elapsed_millis = elapsed_millis
+        timestamp = self.times_wrapped * self.max + elapsed_millis
+        self.previous_timestamp = timestamp
+        return timestamp
+
+
 class Logger:
     def __init__(self, meter_mode, channel, filename_data, filename_time, active_wait_time, inactive_wait_time, on_reception):
-        self.start = pyb.millis()
+        self.timestamper = Timestamper(pyb.millis())
         self.on_reception = on_reception
         self.active = False
         self.active_wait_time = active_wait_time
@@ -152,7 +171,7 @@ class Logger:
                 frame_data, is_frame_complete = self.parser.parse(data)
                 if frame_data is not None:  # Frame received
                     self.on_reception()
-                    timestamp = pyb.elapsed_millis(self.start)
+                    timestamp = str(self.timestamper.timestamp())
                     # TODO: correct race condition where file is closed when awaiting and then write is attempted
                     self.writer.write(frame_data, timestamp)
                 await asyncio.sleep_ms(self.active_wait_time)
